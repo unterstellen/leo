@@ -1,5 +1,6 @@
 using Leo.Core;
 using Leo.Ipc;
+using StreamJsonRpc;
 
 namespace Leo.App.Services;
 
@@ -23,12 +24,43 @@ public sealed class ServiceConnection : IAsyncDisposable
 
     public ConnectionState State { get; private set; } = ConnectionState.Connecting;
     public EngineStatus? Status { get; private set; }
+    public NetworkSnapshot Networks { get; private set; } = NetworkSnapshot.Empty;
     public ClientAccess Access { get; private set; } = ClientAccess.ReadOnly;
     public ILeoControl? Control { get; private set; }
 
+    /// <summary>Connection state or engine status changed.</summary>
     public event EventHandler? Changed;
 
-    public void Start() => _loop ??= Task.Run(() => RunAsync(_cts.Token));
+    /// <summary>A new network snapshot arrived.</summary>
+    public event EventHandler? NetworksChanged;
+
+    public void Start() => _loop ??= Task.Run(() =>
+    {
+        PipeTransport.Warmup();
+        return RunAsync(_cts.Token);
+    });
+
+    /// <summary>
+    /// Runs a command against the service. Returns null on success, or a user-facing error message.
+    /// </summary>
+    public async Task<string?> TryInvokeAsync(Func<ILeoControl, Task> call)
+    {
+        var control = Control;
+        if (control is null) return "The LEO service isn't connected.";
+        try
+        {
+            await call(control);
+            return null;
+        }
+        catch (RemoteInvocationException ex)
+        {
+            return ex.Message;
+        }
+        catch (Exception ex) when (ex is ConnectionLostException or ObjectDisposedException)
+        {
+            return "Lost connection to the LEO service.";
+        }
+    }
 
     private async Task RunAsync(CancellationToken ct)
     {
@@ -43,15 +75,19 @@ public sealed class ServiceConnection : IAsyncDisposable
 
                 var hello = await control.HelloAsync(
                     new HelloRequest(LeoInfo.ProtocolVersion, "LEO.App", LeoInfo.Version), ct);
+                Access = hello.Access;
                 if (!hello.Compatible)
                 {
-                    Publish(ConnectionState.Incompatible, null, hello.Access, null);
+                    SetState(ConnectionState.Incompatible, null, null);
                     await Task.Delay(TimeSpan.FromSeconds(30), ct);
                     continue;
                 }
 
-                control.StatusChanged += (_, s) => Publish(ConnectionState.Connected, s, hello.Access, control);
-                Publish(ConnectionState.Connected, await control.GetStatusAsync(ct), hello.Access, control);
+                control.StatusChanged += (_, s) => SetState(ConnectionState.Connected, s, control);
+                control.NetworksChanged += (_, n) => SetNetworks(n);
+
+                SetState(ConnectionState.Connected, await control.GetStatusAsync(ct), control);
+                SetNetworks(await control.GetNetworksAsync(ct));
 
                 await rpc.Completion.WaitAsync(ct);
             }
@@ -59,23 +95,32 @@ public sealed class ServiceConnection : IAsyncDisposable
             {
                 break;
             }
-            catch
+            catch (Exception ex)
             {
                 // Service not installed/running, pipe broken, or access denied: retry.
+                // Log only when the state changes, so a stopped service doesn't flood the log.
+                if (State != ConnectionState.ServiceUnavailable) UiLog.Write("Service connection failed", ex);
             }
 
-            Publish(ConnectionState.ServiceUnavailable, null, ClientAccess.ReadOnly, null);
+            Access = ClientAccess.ReadOnly;
+            SetState(ConnectionState.ServiceUnavailable, null, null);
+            SetNetworks(NetworkSnapshot.Empty);
             try { await Task.Delay(RetryDelay, ct); } catch (OperationCanceledException) { break; }
         }
     }
 
-    private void Publish(ConnectionState state, EngineStatus? status, ClientAccess access, ILeoControl? control)
+    private void SetState(ConnectionState state, EngineStatus? status, ILeoControl? control)
     {
         State = state;
         Status = status;
-        Access = access;
         Control = control;
         Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SetNetworks(NetworkSnapshot snapshot)
+    {
+        Networks = snapshot;
+        NetworksChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async ValueTask DisposeAsync()

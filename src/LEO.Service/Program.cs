@@ -1,6 +1,8 @@
 using Leo.Core;
+using Leo.Core.Config;
 using Leo.Service;
 using Leo.Service.Logging;
+using Leo.Service.Networking;
 
 // Verbs: (none)              run — as a service under the SCM, or as a console app when started interactively
 //        install [--start]   register the Windows service (admin required)
@@ -10,12 +12,21 @@ if (args.Length > 0 && args[0] is "install" or "uninstall")
     return ServiceInstaller.Run(args[0], args.Skip(1).ToArray());
 }
 
+MachineDataSecurity.Apply();
+Leo.Ipc.PipeTransport.Warmup();
+
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddWindowsService(o => o.ServiceName = LeoInfo.ServiceName);
 builder.Logging.AddLeoFileLogger(LeoPaths.MachineLogs, "service");
+
+builder.Services.AddSingleton(new ConfigStore(LeoPaths.ConfigFile));
 builder.Services.AddSingleton<EngineStatusProvider>();
-builder.Services.AddHostedService<ControlPipeServer>();
+builder.Services.AddSingleton<NetworkInventory>();
+builder.Services.AddSingleton<NetworkManager>();
+
 builder.Services.AddHostedService<EngineHeartbeat>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<NetworkManager>());
+builder.Services.AddHostedService<ControlPipeServer>();
 
 builder.Build().Run();
 return 0;

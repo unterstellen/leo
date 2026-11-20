@@ -9,6 +9,10 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <PackageReference Include="System.Management" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="LEO.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\LEO.Core\LEO.Core.csproj" />

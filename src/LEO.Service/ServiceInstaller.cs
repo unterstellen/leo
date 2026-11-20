@@ -32,7 +32,8 @@ internal static class ServiceInstaller
         var name = LeoInfo.ServiceName;
 
         // Runs as LocalSystem, auto-start at boot (LEO.md §7).
-        var rc = Sc($"create {name} binPath= \"\\\"{exe}\\\"\" start= auto obj= LocalSystem DisplayName= \"{LeoInfo.ServiceDisplayName}\"");
+        var rc = Sc($"create {name} binPath= \"\\\"{exe}\\\"\" start= auto obj= LocalSystem DisplayName= \"{LeoInfo.ServiceDisplayName}\"",
+            quietOn: 1073);
         if (rc == 1073) // ERROR_SERVICE_EXISTS → just repoint it
         {
             rc = Sc($"config {name} binPath= \"\\\"{exe}\\\"\" start= auto obj= LocalSystem DisplayName= \"{LeoInfo.ServiceDisplayName}\"");
@@ -69,10 +70,10 @@ internal static class ServiceInstaller
                            || output.Contains("STOP_PENDING", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static int Sc(string arguments)
+    private static int Sc(string arguments, int? quietOn = null)
     {
         var (rc, output) = Exec("sc.exe", arguments);
-        if (rc != 0) Console.Error.WriteLine($"sc {arguments.Split(' ')[0]} -> {rc}: {output.Trim()}");
+        if (rc != 0 && rc != quietOn) Console.Error.WriteLine($"sc {arguments.Split(' ')[0]} -> {rc}: {output.Trim()}");
         return rc;
     }
 

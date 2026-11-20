@@ -14,6 +14,26 @@ public interface ILeoControl
 
     /// <summary>Raised by the service whenever the status snapshot changes (also a periodic heartbeat).</summary>
     event EventHandler<EngineStatus>? StatusChanged;
+
+    // ── Networks (M1) ─────────────────────────────────────────────────────────
+
+    /// <summary>All user-visible adapters, their networks, priority and the current Primary.</summary>
+    Task<NetworkSnapshot> GetNetworksAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Make an adapter the preferred Primary (moves it to the top of the priority list). Full access.</summary>
+    Task SetPrimaryAsync(string adapterId, CancellationToken cancellationToken = default);
+
+    /// <summary>Replace the failover priority order (adapter ids, most preferred first). Full access.</summary>
+    Task SetPriorityOrderAsync(IReadOnlyList<string> adapterIds, CancellationToken cancellationToken = default);
+
+    /// <summary>Set or clear (null/empty) an adapter nickname. Full access.</summary>
+    Task SetAdapterNicknameAsync(string adapterId, string? nickname, CancellationToken cancellationToken = default);
+
+    /// <summary>Set or clear (null/empty) a network nickname, by <see cref="NetworkInfo.Key"/>. Full access.</summary>
+    Task SetNetworkNicknameAsync(string networkKey, string? nickname, CancellationToken cancellationToken = default);
+
+    /// <summary>Raised whenever adapters, networks, priority or nicknames change.</summary>
+    event EventHandler<NetworkSnapshot>? NetworksChanged;
 }
 
 public sealed record HelloRequest(int ProtocolVersion, string ClientName, string ClientVersion);

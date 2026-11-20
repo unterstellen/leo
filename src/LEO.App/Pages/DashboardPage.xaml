@@ -23,6 +23,25 @@
                 </Grid>
             </Border>
 
+            <!-- Primary network -->
+            <Border Style="{StaticResource LeoCardStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="{x:Bind Networks.PrimaryGlyph, Mode=OneWay}" FontSize="28" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="Primary network" Style="{StaticResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <TextBlock Text="{x:Bind Networks.PrimaryTitle, Mode=OneWay}" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <TextBlock Text="{x:Bind Networks.PrimaryDetail, Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Content="Manage networks" Click="ManageNetworks_Click" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+
             <!-- Engine details -->
             <Border Style="{StaticResource LeoCardStyle}">
                 <Grid RowSpacing="10" ColumnSpacing="24">

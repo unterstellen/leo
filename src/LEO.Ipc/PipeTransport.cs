@@ -45,24 +45,43 @@ public static class PipeTransport
             NamedPipeServerStream.MaxAllowedServerInstances,
             PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous,
-            inBufferSize: 0,
-            outBufferSize: 0,
+            // Must be non-zero: with 0-byte buffers a write only completes against a *real* read, but
+            // System.IO.Pipelines (used by StreamJsonRpc) first waits with a zero-byte read → both sides stall.
+            inBufferSize: 64 * 1024,
+            outBufferSize: 64 * 1024,
             CreateControlPipeSecurity());
+
+    private static readonly Lock RpcInitGate = new();
+
+    /// <summary>
+    /// Runs StreamJsonRpc's static JSON setup once, on one thread. Its type initializers race when two threads
+    /// (or System.Text.Json use elsewhere) hit them at the same moment, which surfaced as a hung first session
+    /// or a TypeInitializationException. Call at process start; <see cref="CreateRpc"/> also serializes creation.
+    /// </summary>
+    public static void Warmup()
+    {
+        using var ms = new MemoryStream();
+        using var rpc = CreateRpc(ms);
+    }
 
     /// <summary>Wraps a connected pipe in a JSON-RPC connection using the shared formatter settings.</summary>
     public static JsonRpc CreateRpc(Stream stream)
     {
-        var formatter = new SystemTextJsonFormatter();
-        var handler = new HeaderDelimitedMessageHandler(stream, stream, formatter);
-        return new JsonRpc(handler);
+        lock (RpcInitGate)
+        {
+            var formatter = new SystemTextJsonFormatter();
+            var handler = new HeaderDelimitedMessageHandler(stream, stream, formatter);
+            return new JsonRpc(handler);
+        }
     }
 
     public static async Task<NamedPipeClientStream> ConnectClientAsync(
         string pipeName = LeoInfo.ControlPipeName, int timeoutMs = 2000, CancellationToken ct = default)
     {
-        // Identification level: the service may inspect our token (to decide ClientAccess) but not act as us.
+        // Anonymous: the service never impersonates us. It identifies the client from its process token
+        // (GetNamedPipeClientProcessId → OpenProcessToken), see LEO.Service ClientIdentity.
         var client = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous,
-            TokenImpersonationLevel.Identification);
+            TokenImpersonationLevel.Anonymous);
         try
         {
             await client.ConnectAsync(timeoutMs, ct).ConfigureAwait(false);

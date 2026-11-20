@@ -31,6 +31,18 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
         };
 
         ContentFrame.Navigate(typeof(DashboardPage));
+        _current = this;
+    }
+
+    private static MainWindow? _current;
+
+    /// <summary>Selects the sidebar item with the given Tag (e.g. "Networks").</summary>
+    public static void NavigateTo(string tag)
+    {
+        if (_current?.Nav.MenuItems.OfType<NavigationViewItem>().FirstOrDefault(i => (i.Tag as string) == tag) is { } item)
+        {
+            _current.Nav.SelectedItem = item;
+        }
     }
 
     public MainViewModel ViewModel { get; }
@@ -64,8 +76,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
                 ContentFrame.Navigate(typeof(DashboardPage));
                 break;
             case "Networks":
-                ContentFrame.Navigate(typeof(ComingSoonPage), new ComingSoonInfo("Networks", "M1",
-                    "All your Wi-Fi, Ethernet and USB-tethered networks, their nicknames, and one-click Primary switching."));
+                ContentFrame.Navigate(typeof(NetworksPage));
                 break;
             case "Apps":
                 ContentFrame.Navigate(typeof(ComingSoonPage), new ComingSoonInfo("Apps", "M3",

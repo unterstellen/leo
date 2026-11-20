@@ -319,19 +319,35 @@ leo-windows/
 
 ```
 dotnet build LEO.slnx                      # build everything
-dotnet test  tests\LEO.Tests               # IPC round-trip tests
-.\tools\dev-service.ps1 install            # register + start the LEO service from bin\ (UAC)
+dotnet test  tests\LEO.Tests               # unit + in-process IPC/host tests
+.\tools\dev-service.ps1 deploy             # build service, copy to Program Files\UNTERSTELLEN\LEO\Service, (re)install + start (1 UAC)
+.\tools\dev-service.ps1 logs               # tail today's service log
 src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
-.\tools\dev-service.ps1 uninstall
+.\tools\dev-service.ps1 uninstall          # stop (metrics handed back to Windows) + remove
 ```
 
-- `LEO.Service.exe` with no arguments runs as a console app when started from a terminal, which is handy for debugging without installing. Logs go to `%ProgramData%\UNTERSTELLEN\LEO\logs\`.
+- The service runs from Program Files (admin-only writable), never from `bin\`, so rebuilding never collides with the running service.
+- `LEO.Service.exe` with no arguments runs as a console app when started from a terminal. Logs: `%ProgramData%\UNTERSTELLEN\LEO\logs\` (service), `%LocalAppData%\UNTERSTELLEN\LEO\logs\` (UI connection errors).
+- Optional test switches: `LEO_LIVE_TESTS=1` runs read-only checks against the installed service; `LEO_DUMP=<file.dmp>` prints managed stacks and faulted tasks from a service dump (ClrMD, dev-only).
+
+### IPC rules learned the hard way (don't regress these)
+- **Never impersonate pipe clients** (`RunAsClient`). An identification-level token left on a thread-pool thread makes later lazy assembly loads fail with an empty `FileNotFoundException` (0x80070002), which silently killed StreamJsonRpc's read loop. Clients connect `Anonymous`; the service identifies them from the client process token (`GetNamedPipeClientProcessId` → `OpenProcessToken`, needs `TOKEN_QUERY | TOKEN_DUPLICATE`).
+- **Pipe buffers must be non-zero.** With 0-byte buffers a write only completes against a real read, but System.IO.Pipelines waits with zero-byte reads.
+- StreamJsonRpc's formatter is warmed up once at process start (`PipeTransport.Warmup()`), and JSON-RPC creation is serialized.
 - **Smart App Control** (Windows 11) blocks unsigned, locally built binaries, including LEO's own builds and test DLLs. A dev PC needs Smart App Control turned **off**. The alternative is signing every build with a publicly trusted certificate (e.g. Azure Trusted Signing). Self-signed certificates are not accepted.
 
 ### M0 status
 - Done: solution, shared build props, central package versions; `LEO.Core` (identity, paths); `LEO.Ipc` (JSON-RPC contract, ACL'd named pipe); `LEO.Service` (Windows service host, control pipe server, per-client access level, file logging, `install`/`uninstall` verbs with recovery actions); `LEO.App` (single-instance WinUI 3 window with Mica, NavigationView skeleton, tray icon + menu, close-to-tray, auto-reconnect to the service, "Start at login" toggle); `LEO.Tests`.
 - LEO icon used for the exe, window, title bar and tray.
 - Deferred to M8: Authenticode check of pipe clients, MSI.
+
+### M1 status (2026-11-20)
+- **Inventory** (`NetworkInventory`): .NET adapters + driver flags + Windows' visible-adapter list (MSFT_NetAdapter, which hides extra WiFiCx ports such as WiFi 3/4) + NLA profiles (SSID, connectivity, metered; stale profiles ignored) + IPv4 metrics. Kinds: Wi-Fi, Ethernet, USB tether, cellular, Bluetooth, VPN; hypervisor/WAN-miniport/tunnel adapters hidden. Network identity: `wifi:<SSID>`, else `gw:<gateway MAC>`, else `nla:<profile>`.
+- **Primary + priority** (`PriorityPlanner`, `NetworkManager`): ranked adapters get metrics 10, 20, 30… (IPv4 + IPv6). Primary = first ranked adapter that is up with a gateway. Unranked adapters append wired → Wi-Fi → tether → cellular → Bluetooth, connected ones first. VPNs are listed but not managed (M6). All pinned metrics go back to automatic when the service stops.
+- **Nicknames**: per adapter (matched by GUID, falling back to MAC for USB re-plugs) and per network (follows the network to any adapter). Stored in `config.json`.
+- **UI**: Networks page (cards, Make primary, move up/down, Rename dialog, read-only notice), Primary card on the Dashboard, tray quick menu listing networks with a check on the Primary (click to switch).
+- **Security**: changes need Full access (admins, including non-elevated split-token admins). Standard users are read-only, enforced in the service (`AccessDenied`).
+- Verified on the dev PC: WiFi (Zixel) primary at metric 10, WiFi 2/Bluetooth ranked behind it, Tailscale untouched; Make primary, reorder and rename work through the real UI; internet unaffected. **Not yet seen by eye: the tray quick menu with the network list.**
 
 ---
 
