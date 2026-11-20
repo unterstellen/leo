@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LEO.App/LEO.App.csproj" />
+    <Project Path="src/LEO.Core/LEO.Core.csproj" />
+    <Project Path="src/LEO.Ipc/LEO.Ipc.csproj" />
+    <Project Path="src/LEO.Service/LEO.Service.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LEO.Tests/LEO.Tests.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+</Solution>

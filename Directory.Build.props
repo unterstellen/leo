@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <Product>LEO</Product>
+    <Company>INFERSTELLEN</Company>
+    <Authors>UNTERSTELLEN</Authors>
+    <Copyright>© 2026 INFERSTELLEN (inferstellen.com). Published by UNTERSTELLEN (unterstellen.org).</Copyright>
+    <Version>0.1.0</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

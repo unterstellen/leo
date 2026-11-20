@@ -5,7 +5,11 @@
 | **App name** | LEO |
 | **Publisher (brand)** | UNTERSTELLEN — unterstellen.org |
 | **Company** | INFERSTELLEN — inferstellen.com |
+| **Code-signing identity** | INFERSTELLEN |
+| **Repository** | https://github.com/unterstellen/leo-windows (public) |
+| **Releases / updates** | https://github.com/unterstellen/leo-windows/releases |
 | **Platform** | Windows 11, x64 only |
+| **Language** | English only (permanently) |
 | **Price** | Free. No accounts, no telemetry |
 | **Status** | Specification (v0.1, 2026-11-20) |
 
@@ -32,12 +36,14 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 | Architecture | **Windows Service (LocalSystem)** plus a separate **non-elevated tray/desktop UI**, connected by a secured named pipe |
 | Split-tunnel tech | **Wintun TUN adapter** plus a user-mode packet engine (no custom kernel driver) |
 | Stack | **C# / .NET 8+**, **WinUI 3** UI. Packet hot path in a native **Rust** core (see §5.3) |
-| Code signing | An EV/OV certificate will be bought. Every binary and the installer are signed |
+| Code signing | An EV/OV certificate issued to **INFERSTELLEN** will be bought. Every binary and the installer are signed |
+| Branding | No custom brand colors: follow Windows 11 (system accent, light/dark). **Logo**: a yellow circle face wearing dark glasses, with no eyes, nose or mouth (`assets/leo.svg`) |
+| Language | English only, permanently. No localization layer |
 | Failover | **Auto-failover by priority**, based on real internet health checks. Switches back when the network recovers |
 | Pinned network down | **Per-rule choice**: `Block` (kill switch) or `Fall back to Primary` |
 | Extras | Live per-network stats, Profiles with auto-switch, Per-network DNS, **Bandwidth bonding** |
 | VPN | LEO is the **underlay** (the VPN rides on top of the network LEO picks) **and** can **bypass** the VPN for chosen apps/URLs |
-| Distribution | Signed **MSI installer** from the website, with auto-update |
+| Distribution | Signed **MSI installer** published on **GitHub Releases**, with auto-update |
 | UI style | **Windows 11 Fluent** (Mica, system theme and accent) |
 | Min OS | **Windows 11 only** |
 | Control surfaces | Main window, **tray quick menu**, **toast notifications** |
@@ -152,7 +158,11 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 - Optional "metered" flag: rules can avoid metered networks, and stats show data used per session/day/month with a cap warning.
 
 ### 5.7 Health monitoring & failover
-- A probe runs on **each interface** every N seconds (default 5): HTTP `generate_204`-style check (endpoint configurable), DNS lookup, and TCP connect latency. Detects captive portals.
+- A probe runs on **each interface** every N seconds (default 5): a small HTTP check, a DNS lookup, and TCP connect latency. Detects captive portals.
+- **Default probe targets** (changeable in Settings):
+  1. Microsoft NCSI, the same check Windows uses for its "No internet" icon: `http://www.msftconnecttest.com/connecttest.txt`, expecting the body `Microsoft Connect Test`.
+  2. Fallback: Cloudflare `http://cp.cloudflare.com/generate_204`, expecting HTTP 204.
+  - A network is `Up` if either probe succeeds. A redirect or unexpected content means `Captive`. No LEO-hosted endpoint is needed.
 - States: `Up` / `Degraded` (high loss or latency) / `Captive` / `NoInternet` / `Disconnected`.
 - Failover state machine: if Primary is not `Up` for X seconds (default 6), promote the next healthy network in priority order. After the preferred network has been `Up` for Y seconds (default 30), **fail back**, with hysteresis to stop flapping.
 - A toast is shown on every failover and failback.
@@ -245,15 +255,16 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 - Stats DB: `%ProgramData%\UNTERSTELLEN\LEO\stats.db` (SQLite).
 - Logs: `%ProgramData%\UNTERSTELLEN\LEO\logs\` (rolling, 7 days).
 - UI preferences: `%LocalAppData%\UNTERSTELLEN\LEO\`.
-- **No telemetry. No accounts.** The only network call LEO makes for itself is the update check to unterstellen.org.
+- **No telemetry. No accounts.** LEO's only network calls of its own are the update check to `api.github.com` (unterstellen/leo-windows releases) and the internet health probes (§5.7).
 
 ---
 
 ## 9. Distribution
 - **MSI** built with the WiX Toolset. MSIX isn't used because it can't install the Wintun driver adapter or a LocalSystem service cleanly.
 - Installer: installs the service, Wintun, the UI and Start menu shortcuts, with the option "Start LEO at login".
-- Everything signed with the INFERSTELLEN/UNTERSTELLEN code-signing certificate (Authenticode + timestamp).
-- **Auto-update**: the service checks a signed JSON manifest on unterstellen.org, downloads the MSI, verifies the signature, installs silently and restarts. The user can defer it.
+- Everything signed with the **INFERSTELLEN** code-signing certificate (Authenticode + timestamp).
+- **Hosting: GitHub Releases** at https://github.com/unterstellen/leo-windows/releases (public repo). Each release has the signed `LEO-<version>-x64.msi` attached. Tags look like `v0.2.0`.
+- **Auto-update**: the service calls `GET https://api.github.com/repos/unterstellen/leo-windows/releases/latest` (anonymous; GitHub allows 60 requests/hour per IP, so it checks at most every 6 h), compares the tag (`v0.2.0`) with its own version, downloads the MSI asset, **verifies the Authenticode signature is INFERSTELLEN and valid**, then installs silently and restarts. The user can defer it. The Canary channel reads pre-releases instead of `latest`.
 - Channels: `canary` (git branch `canary`) → `main` (stable).
 
 ---
@@ -302,9 +313,34 @@ leo-windows/
 
 ---
 
-## 13. Open Questions
-1. **Signing identity**: which legal entity is the certificate issued to (INFERSTELLEN or UNTERSTELLEN)? This sets the "Publisher" shown in UAC/SmartScreen and the signature check in §4.2.
-2. **Branding assets**: LEO logo/icon (tray needs light and dark variants), accent color.
-3. **Update hosting**: exact URL for the update manifest and downloads.
-4. **Health probe default endpoint**: an LEO-owned endpoint (e.g. `https://unterstellen.org/generate_204`) or Microsoft's NCSI endpoint?
-5. **Localization**: English only for v1, or other languages too?
+## 12a. Development
+
+**Requirements:** .NET SDK 10.0.404+ (pinned in `global.json`). No Visual Studio needed: Windows App SDK / WinUI 3 come in through NuGet. Rust is only needed from M3.
+
+```
+dotnet build LEO.slnx                      # build everything
+dotnet test  tests\LEO.Tests               # IPC round-trip tests
+.\tools\dev-service.ps1 install            # register + start the LEO service from bin\ (UAC)
+src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
+.\tools\dev-service.ps1 uninstall
+```
+
+- `LEO.Service.exe` with no arguments runs as a console app when started from a terminal, which is handy for debugging without installing. Logs go to `%ProgramData%\UNTERSTELLEN\LEO\logs\`.
+- **Smart App Control** (Windows 11) blocks unsigned, locally built binaries, including LEO's own builds and test DLLs. A dev PC needs Smart App Control turned **off**. The alternative is signing every build with a publicly trusted certificate (e.g. Azure Trusted Signing). Self-signed certificates are not accepted.
+
+### M0 status
+- Done: solution, shared build props, central package versions; `LEO.Core` (identity, paths); `LEO.Ipc` (JSON-RPC contract, ACL'd named pipe); `LEO.Service` (Windows service host, control pipe server, per-client access level, file logging, `install`/`uninstall` verbs with recovery actions); `LEO.App` (single-instance WinUI 3 window with Mica, NavigationView skeleton, tray icon + menu, close-to-tray, auto-reconnect to the service, "Start at login" toggle); `LEO.Tests`.
+- LEO icon used for the exe, window, title bar and tray.
+- Deferred to M8: Authenticode check of pipe clients, MSI.
+
+---
+
+## 13. Resolved Questions (2026-11-20)
+1. **Signing identity**: INFERSTELLEN. Used for UAC/SmartScreen publisher, the pipe-client check (§4.2) and the update check (§9).
+2. **Branding**: follow Windows 11, with no custom colors. Logo = yellow face + dark glasses, no other features. Source `assets/leo.svg`, rendered by `tools/make-icon.ps1` into `src/LEO.App/Assets/leo.ico` (16–256 px; a simplified, bolder variant at ≤ 24 px for the tray). One icon works on both light and dark taskbars.
+3. **Update hosting**: GitHub Releases on the public repo https://github.com/unterstellen/leo-windows.
+4. **Health probe**: Microsoft NCSI + Cloudflare fallback, configurable (§5.7).
+5. **Localization**: English only, permanently.
+
+## 14. Open Questions
+None right now.

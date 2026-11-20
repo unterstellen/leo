@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Leo.App.Pages.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer>
+        <StackPanel Spacing="16" MaxWidth="960" HorizontalAlignment="Left">
+            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
+
+            <Border Style="{StaticResource LeoCardStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Start LEO at login" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                   Text="Opens LEO in the system tray when you sign in. Your network rules keep working either way — the LEO service always starts with Windows." />
+                    </StackPanel>
+                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" OnContent="On" OffContent="Off"
+                                  IsOn="{x:Bind ViewModel.StartAtLogin, Mode=TwoWay}" />
+                </Grid>
+            </Border>
+
+            <Border Style="{StaticResource LeoCardStyle}">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="About" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                    <TextBlock>
+                        <Run Text="LEO" /> <Run Text="{x:Bind ViewModel.AppVersion}" />
+                    </TextBlock>
+                    <TextBlock Text="{x:Bind ViewModel.PublisherLine}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <StackPanel Orientation="Horizontal" Spacing="12">
+                        <HyperlinkButton Content="unterstellen.org" NavigateUri="https://unterstellen.org" Padding="0" />
+                        <HyperlinkButton Content="inferstellen.com" NavigateUri="https://inferstellen.com" Padding="0" />
+                        <HyperlinkButton Content="Source &amp; releases on GitHub" NavigateUri="https://github.com/unterstellen/leo-windows" Padding="0" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

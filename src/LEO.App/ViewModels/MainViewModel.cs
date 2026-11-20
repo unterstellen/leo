@@ -1,0 +1,85 @@
+using CommunityToolkit.Mvvm.ComponentModel;
+using Leo.App.Services;
+using Leo.Core;
+using Leo.Ipc;
+using Microsoft.UI.Dispatching;
+
+namespace Leo.App.ViewModels;
+
+/// <summary>App-wide state shown by the window and the tray.</summary>
+public sealed partial class MainViewModel : ObservableObject
+{
+    private readonly DispatcherQueue _dispatcher;
+    private readonly ServiceConnection _connection;
+
+    public MainViewModel(ServiceConnection connection, DispatcherQueue dispatcher)
+    {
+        _connection = connection;
+        _dispatcher = dispatcher;
+        _loading = true;
+        StartAtLogin = StartupManager.IsEnabled;
+        _loading = false;
+        _connection.Changed += (_, _) => _dispatcher.TryEnqueue(Refresh);
+        Refresh();
+    }
+
+    public string AppVersion => LeoInfo.Version;
+    public string PublisherLine => $"{LeoInfo.Publisher} · {LeoInfo.Company}";
+
+    [ObservableProperty] public partial string ConnectionText { get; set; } = "Connecting to LEO service…";
+    [ObservableProperty] public partial string ConnectionGlyph { get; set; } = ""; // Sync
+    [ObservableProperty] public partial bool IsConnected { get; set; }
+    [ObservableProperty] public partial string EngineStateText { get; set; } = "—";
+    [ObservableProperty] public partial string ServiceVersionText { get; set; } = "—";
+    [ObservableProperty] public partial string RunningAsText { get; set; } = "—";
+    [ObservableProperty] public partial string UptimeText { get; set; } = "—";
+    [ObservableProperty] public partial string AccessText { get; set; } = "—";
+    [ObservableProperty] public partial string ClientsText { get; set; } = "—";
+    [ObservableProperty] public partial string TrayToolTip { get; set; } = "LEO — connecting…";
+
+    [ObservableProperty] public partial bool StartAtLogin { get; set; }
+
+    private bool _loading;
+
+    partial void OnStartAtLoginChanged(bool value)
+    {
+        if (_loading) return;
+        try { StartupManager.SetEnabled(value); }
+        catch { StartAtLogin = StartupManager.IsEnabled; }
+    }
+
+    private void Refresh()
+    {
+        var status = _connection.Status;
+        IsConnected = _connection.State == ConnectionState.Connected && status is not null;
+
+        (ConnectionText, ConnectionGlyph) = _connection.State switch
+        {
+            ConnectionState.Connected => ("Connected to LEO service", ""),          // CheckMark
+            ConnectionState.Incompatible => ("LEO service version mismatch — reinstall LEO", ""), // Warning
+            ConnectionState.ServiceUnavailable => ("LEO service is not running", ""),           // Error
+            _ => ("Connecting to LEO service…", ""),
+        };
+
+        if (status is not null)
+        {
+            EngineStateText = status.State.ToString();
+            ServiceVersionText = status.ServiceVersion;
+            RunningAsText = status.IsElevated ? $"{status.RunningAs} (elevated)" : status.RunningAs;
+            UptimeText = FormatUptime(DateTimeOffset.Now - status.StartedAt);
+            ClientsText = status.ConnectedClients.ToString();
+            AccessText = _connection.Access == ClientAccess.Full ? "Full control" : "Read-only";
+        }
+        else
+        {
+            EngineStateText = ServiceVersionText = RunningAsText = UptimeText = ClientsText = AccessText = "—";
+        }
+
+        TrayToolTip = IsConnected ? $"LEO — engine {EngineStateText.ToLowerInvariant()}" : $"LEO — {ConnectionText}";
+    }
+
+    private static string FormatUptime(TimeSpan t) =>
+        t.TotalDays >= 1 ? $"{(int)t.TotalDays}d {t.Hours}h {t.Minutes}m"
+        : t.TotalHours >= 1 ? $"{t.Hours}h {t.Minutes}m"
+        : $"{t.Minutes}m {t.Seconds}s";
+}
