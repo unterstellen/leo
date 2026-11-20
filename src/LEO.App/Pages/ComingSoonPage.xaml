@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Leo.App.Pages.ComingSoonPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <StackPanel Spacing="16" MaxWidth="960" HorizontalAlignment="Left">
+        <TextBlock x:Name="TitleText" Style="{StaticResource TitleTextBlockStyle}" />
+        <Border Style="{StaticResource LeoCardStyle}">
+            <StackPanel Spacing="6">
+                <TextBlock x:Name="MilestoneText" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                <TextBlock x:Name="DescriptionText" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            </StackPanel>
+        </Border>
+    </StackPanel>
+</Page>

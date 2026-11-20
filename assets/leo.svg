@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- LEO mark: a yellow face wearing glasses. No eyes, no nose, no mouth. -->
+  <defs>
+    <radialGradient id="face" cx="40%" cy="32%" r="75%">
+      <stop offset="0" stop-color="#FFE36E"/>
+      <stop offset="0.6" stop-color="#FFC83D"/>
+      <stop offset="1" stop-color="#F2A60C"/>
+    </radialGradient>
+    <linearGradient id="lens" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A3F4B"/>
+      <stop offset="1" stop-color="#14161B"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="128" cy="128" r="120" fill="url(#face)" stroke="#D08A00" stroke-width="6"/>
+
+  <!-- temples (arms) running to the edge of the face -->
+  <path d="M30 104 L54 100" stroke="#1E2128" stroke-width="12" stroke-linecap="round"/>
+  <path d="M226 104 L202 100" stroke="#1E2128" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- bridge -->
+  <path d="M112 106 Q128 94 144 106" fill="none" stroke="#1E2128" stroke-width="12" stroke-linecap="round"/>
+
+  <!-- lenses -->
+  <rect x="50" y="88" width="66" height="56" rx="22" fill="url(#lens)" stroke="#1E2128" stroke-width="10"/>
+  <rect x="140" y="88" width="66" height="56" rx="22" fill="url(#lens)" stroke="#1E2128" stroke-width="10"/>
+
+  <!-- lens highlights -->
+  <path d="M64 104 Q70 97 82 96" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="7" stroke-linecap="round"/>
+  <path d="M154 104 Q160 97 172 96" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="7" stroke-linecap="round"/>
+</svg>

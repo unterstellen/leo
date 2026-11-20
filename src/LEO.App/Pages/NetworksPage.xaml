@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Leo.App.Pages.NetworksPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Leo.App.ViewModels"
+    xmlns:controls="using:Leo.App.Controls">
+    <ScrollViewer>
+        <StackPanel Spacing="16" MaxWidth="960" HorizontalAlignment="Left">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Networks" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                           Text="Everything this PC is connected to. The top of the list is your Primary network; if it drops, Windows falls back to the next one in order." />
+            </StackPanel>
+
+            <InfoBar IsOpen="{x:Bind ViewModel.IsReadOnlyNoticeVisible, Mode=OneWay}" IsClosable="False" Severity="Informational"
+                     Title="Read-only" Message="Only administrators can change networks, nicknames or priority." />
+            <InfoBar IsOpen="{x:Bind ViewModel.FailoverActive, Mode=OneWay}" IsClosable="False" Severity="Warning"
+                     Title="Failover active" Message="{x:Bind ViewModel.FailoverText, Mode=OneWay}" />
+            <InfoBar x:Name="ErrorBar" IsOpen="False" Severity="Error" Title="Couldn't apply that change"
+                     Message="{x:Bind ViewModel.ErrorText, Mode=OneWay}" Closed="ErrorBar_Closed" />
+
+            <TextBlock Text="{x:Bind ViewModel.EmptyText, Mode=OneWay}" Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Adapters}">
+                <ItemsRepeater.Layout>
+                    <StackLayout Spacing="8" />
+                </ItemsRepeater.Layout>
+                <ItemsRepeater.ItemTemplate>
+                    <DataTemplate x:DataType="vm:AdapterCardViewModel">
+                        <Border Style="{StaticResource LeoCardStyle}" Padding="16">
+                            <Grid ColumnSpacing="16" RowSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- Kind icon + priority -->
+                                <StackPanel Spacing="6" VerticalAlignment="Top" Width="44" Margin="0,2,0,0">
+                                    <FontIcon Glyph="{x:Bind Glyph, Mode=OneWay}" FontSize="26" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind PriorityText, Mode=OneWay}" HorizontalAlignment="Center"
+                                               Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+
+                                <!-- Text: full card width -->
+                                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Top">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="{x:Bind Title, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                        <Border Visibility="{x:Bind IsPrimary, Mode=OneWay}" CornerRadius="4" Padding="6,1"
+                                                Background="{ThemeResource AccentFillColorDefaultBrush}" VerticalAlignment="Center">
+                                            <TextBlock Text="Primary" FontSize="11" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                                        </Border>
+                                        <Border Visibility="{x:Bind IsDemoted, Mode=OneWay}" CornerRadius="4" Padding="6,1"
+                                                Background="{ThemeResource SystemFillColorCautionBackgroundBrush}" VerticalAlignment="Center">
+                                            <TextBlock Text="{x:Bind DemotedText, Mode=OneWay}" FontSize="11"
+                                                       Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                    <TextBlock Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}">
+                                        <Run Text="{x:Bind Subtitle, Mode=OneWay}" />
+                                    </TextBlock>
+                                    <TextBlock TextTrimming="CharacterEllipsis">
+                                        <Run Text="{x:Bind NetworkText, Mode=OneWay}" /><Run Text="  ·  " Foreground="{ThemeResource TextFillColorTertiaryBrush}" /><Run Text="{x:Bind StatusText, Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </TextBlock>
+                                    <TextBlock Text="{x:Bind DetailsText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind DualLinkText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                               Visibility="{x:Bind DualLinkText, Mode=OneWay, Converter={StaticResource NotNullToBool}}" />
+                                    <TextBlock Text="{x:Bind PinsText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"
+                                               Visibility="{x:Bind PinsText, Mode=OneWay, Converter={StaticResource NotNullToBool}}" />
+                                </StackPanel>
+
+                                <!-- Actions: their own row under the text, so details never get squeezed -->
+                                <controls:WrapPanel Grid.Row="1" Grid.Column="1" HorizontalSpacing="6" VerticalSpacing="6">
+                                    <Button Content="Make primary" Command="{x:Bind MakePrimaryCommand}" IsEnabled="{x:Bind CanMakePrimary, Mode=OneWay}"
+                                            Visibility="{x:Bind ShowPriorityControls, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" />
+                                    <Button Command="{x:Bind MoveUpCommand}" IsEnabled="{x:Bind CanMoveUp, Mode=OneWay}"
+                                            Visibility="{x:Bind ShowPriorityControls, Mode=OneWay}" ToolTipService.ToolTip="Move up in priority" AutomationProperties.Name="Move up">
+                                        <FontIcon Glyph="&#xE70E;" FontSize="14" />
+                                    </Button>
+                                    <Button Command="{x:Bind MoveDownCommand}" IsEnabled="{x:Bind CanMoveDown, Mode=OneWay}"
+                                            Visibility="{x:Bind ShowPriorityControls, Mode=OneWay}" ToolTipService.ToolTip="Move down in priority" AutomationProperties.Name="Move down">
+                                        <FontIcon Glyph="&#xE70D;" FontSize="14" />
+                                    </Button>
+                                    <Button Content="{x:Bind DualLinkButtonText, Mode=OneWay}" Click="DualLink_Click" Tag="{x:Bind}"
+                                            Visibility="{x:Bind ShowDualLinkButton, Mode=OneWay}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
+                                            AutomationProperties.Name="{x:Bind DualLinkButtonText, Mode=OneWay}" />
+                                    <Button Click="Wifi_Click" Tag="{x:Bind}" Visibility="{x:Bind ShowWifiButton, Mode=OneWay}"
+                                            AutomationProperties.Name="Wi-Fi networks">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE701;" FontSize="14" />
+                                            <TextBlock Text="Wi-Fi networks" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Click="Rename_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}" AutomationProperties.Name="Rename">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE8AC;" FontSize="14" />
+                                            <TextBlock Text="Rename" />
+                                        </StackPanel>
+                                    </Button>
+                                </controls:WrapPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
