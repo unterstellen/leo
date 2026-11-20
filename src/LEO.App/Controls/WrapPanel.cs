@@ -18,6 +18,9 @@ public sealed partial class WrapPanel : Panel
         double x = 0, y = 0, lineHeight = 0, width = 0;
         foreach (var child in Children)
         {
+            // Buttons default to VerticalAlignment=Center; stretch so ArrangeOverride can equalize line heights.
+            if (child is FrameworkElement { VerticalAlignment: not VerticalAlignment.Stretch } fe)
+                fe.VerticalAlignment = VerticalAlignment.Stretch;
             child.Measure(new Size(availableSize.Width, double.PositiveInfinity));
             var size = child.DesiredSize;
             if (size.Width == 0 && size.Height == 0) continue; // collapsed
@@ -35,9 +38,26 @@ public sealed partial class WrapPanel : Panel
         return new Size(width, y + lineHeight);
     }
 
+    /// <summary>
+    /// Every child on a line gets that line's full height, so an icon-only button (↑ ↓) is exactly as tall as
+    /// its text-labelled neighbours.
+    /// </summary>
     protected override Size ArrangeOverride(Size finalSize)
     {
+        var line = new List<UIElement>();
         double x = 0, y = 0, lineHeight = 0;
+
+        void Flush()
+        {
+            double lx = 0;
+            foreach (var c in line)
+            {
+                c.Arrange(new Rect(lx, y, c.DesiredSize.Width, lineHeight));
+                lx += c.DesiredSize.Width + HorizontalSpacing;
+            }
+            line.Clear();
+        }
+
         foreach (var child in Children)
         {
             var size = child.DesiredSize;
@@ -48,14 +68,16 @@ public sealed partial class WrapPanel : Panel
             }
             if (x > 0 && x + size.Width > finalSize.Width)
             {
+                Flush();
                 y += lineHeight + VerticalSpacing;
                 x = 0;
                 lineHeight = 0;
             }
-            child.Arrange(new Rect(x, y, size.Width, size.Height));
+            line.Add(child);
             x += size.Width + HorizontalSpacing;
             lineHeight = Math.Max(lineHeight, size.Height);
         }
+        Flush();
         return finalSize;
     }
 }
