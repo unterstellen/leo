@@ -428,3 +428,14 @@ Goal: anyone on Windows 11 x64 downloads LEO from GitHub Releases, installs it w
 | Docs | README (what it does, screenshots, install, uninstall, limits), CONTRIBUTING, privacy statement ("no telemetry, no accounts, no servers") | `LICENSE` done (GPL-3.0-or-later) |
 
 Platform scope (decided 2026-11-20): **Windows 11 only, x64 only for v1**; ARM64 after v1; no Windows 10.
+
+### 16.1 SignPath Foundation: steps and rules (read 2026-11-20 from signpath.org; their terms are marked "Draft")
+**Order matters: SignPath requires the project to be *already released*, so apply after the first unsigned beta.**
+1. Now: **MFA on GitHub** for every team member (also required on SignPath). Repo public + `LICENSE` (OSI-approved, no commercial dual-licensing) ✅.
+2. M8: release workflow on **GitHub-hosted runners** (self-hosted runners fail SignPath's checks) → upload the unsigned build as a workflow artifact.
+3. M8: README / download page describing LEO, with a section titled **"Code signing policy"** containing *"Free code signing provided by SignPath.io, certificate by SignPath Foundation"*, the team roles (authors, reviewers, approvers) and a privacy statement link (LEO: no telemetry, no accounts, no servers).
+4. Publish the first **unsigned beta** on GitHub Releases, then **apply at signpath.org/apply** (acceptance is discretionary).
+5. After acceptance: SignPath project + "GitHub.com" trusted build system + artifact configuration (product name must equal the project name, "LEO") + signing policy + API token → repo secret `SIGNPATH_API_TOKEN` → workflow step `signpath/github-action-submit-signing-request@v3`.
+6. **Every release needs a manual approval in SignPath** before it's signed.
+
+Rules that shape LEO: the installer must **announce system changes** (service; from M3 a virtual network adapter); a real **uninstaller** is mandatory; **sign only our own binaries**: Wintun ships with its upstream signature and is never re-signed or rebuilt, and Microsoft runtime files stay as Microsoft signed them; no proprietary code in the project.
