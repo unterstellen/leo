@@ -5,12 +5,13 @@
 | **App name** | LEO |
 | **Publisher (brand)** | UNTERSTELLEN — unterstellen.org |
 | **Company** | INFERSTELLEN — inferstellen.com |
-| **Code-signing identity** | INFERSTELLEN |
+| **Code signing** | **SignPath Foundation** (free signing for open-source projects), done in GitHub Actions. Windows shows the publisher as "SignPath Foundation" |
 | **Repository** | https://github.com/unterstellen/leo-windows (public) |
 | **Releases / updates** | https://github.com/unterstellen/leo-windows/releases |
 | **Platform** | Windows 11, x64 only |
 | **Language** | English only (permanently) |
-| **Price** | Free. No accounts, no telemetry |
+| **Price** | **Free forever and open source.** No accounts, no telemetry, no hosted services |
+| **License** | **GPL-3.0-or-later** (`LICENSE` in the repo: official GNU text, SHA-256 `3972dc97…dfb36986`) |
 | **Status** | Specification (v0.1, 2026-11-20) |
 
 ---
@@ -36,7 +37,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 | Architecture | **Windows Service (LocalSystem)** plus a separate **non-elevated tray/desktop UI**, connected by a secured named pipe |
 | Split-tunnel tech | **Wintun TUN adapter** plus a user-mode packet engine (no custom kernel driver) |
 | Stack | **C# / .NET 8+**, **WinUI 3** UI. Packet hot path in a native **Rust** core (see §5.3) |
-| Code signing | An EV/OV certificate issued to **INFERSTELLEN** will be bought. Every binary and the installer are signed |
+| Code signing | **SignPath Foundation** (free for OSS; decided 2026-11-20, replacing a bought INFERSTELLEN certificate). Release builds are made and signed in GitHub Actions, never on a dev PC. Every binary and the installer are signed |
 | Branding | No custom brand colors: follow Windows 11 (system accent, light/dark). **Logo**: a yellow circle face wearing dark glasses, with no eyes, nose or mouth (`assets/leo.svg`) |
 | Language | English only, permanently. No localization layer |
 | Failover | **Auto-failover by priority**, based on real internet health checks. Switches back when the network recovers |
@@ -45,7 +46,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 | VPN | LEO is the **underlay** (the VPN rides on top of the network LEO picks) **and** can **bypass** the VPN for chosen apps/URLs |
 | Distribution | Signed **MSI installer** published on **GitHub Releases**, with auto-update |
 | UI style | **Windows 11 Fluent** (Mica, system theme and accent) |
-| Min OS | **Windows 11 only** |
+| Min OS / CPU | **Windows 11 only, x64** (re-confirmed 2026-11-20). ARM64 later, after v1 |
 | Control surfaces | Main window, **tray quick menu**, **toast notifications** |
 | App rule picking | Browse .exe, pick a running process, installed apps (incl. Store/UWP), folder/wildcard |
 | URL rules | Domains + subdomains, IP / CIDR / ports / protocol, importable rule lists |
@@ -110,7 +111,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 
 ### 4.2 IPC security
 - Pipe ACL: `SYSTEM`, `Administrators` = full control. Interactive `Users` = **read-only** by default. A setting lets standard users change rules.
-- The service checks the client's PID → image path → Authenticode signature (must be signed by INFERSTELLEN/UNTERSTELLEN) before it accepts commands.
+- The service checks the client's PID → image path → Authenticode signature (must carry the same signature as the service itself, i.e. the release certificate; see §9) before it accepts commands.
 - Protocol: JSON-RPC 2.0 over the pipe. Events (adapter up/down, failover, stats ticks) are pushed to subscribed UIs.
 
 ---
@@ -139,7 +140,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 ### 5.3 Engine implementation
 - A **Rust** native library (`leo-engine.dll`) handles the packet hot path: Wintun I/O, the TCP/IP stack (e.g. `smoltcp`-based), the flow table, sniffing and dialers. C# handles policy, config, IPC and UI.
 - The C# service sends the compiled rule table to the engine. The engine sends flow events and counters back.
-- **Licensing constraint**: LEO is free but **closed-source**, so **no GPL code** (e.g. sing-box, Clash cores). Use MIT/Apache/BSD only. Wintun ships as Microsoft-signed `wintun.dll` under its redistribution license.
+- **Licensing**: LEO is **open source and free forever, licensed GPL-3.0-or-later** (decided 2026-11-20). Dependencies must be GPL-3.0-compatible: GPL-3.0/LGPL, MIT, Apache-2.0, BSD are fine (so GPL engines such as sing-box *could* be reused); GPL-2.0-only code and proprietary libraries are not. Wintun ships as Microsoft-signed `wintun.dll` under its redistribution license.
 
 ### 5.4 DNS
 - LEO runs a DNS resolver on the TUN interface. Windows' DNS points at it.
@@ -216,7 +217,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 
 ### 6.8 Bandwidth bonding
 - **Bond group** = several Route Targets with a balancing mode: weighted, round-robin, least-latency, or least-loaded.
-- Works **per connection**: new flows are spread across members. Many-connection downloads (browsers, Steam, torrents, download managers) get roughly the combined bandwidth. A **single TCP stream cannot go faster than one link** (that would need a remote aggregation server, which is out of scope; see §10).
+- Works **per connection**: new flows are spread across members. Many-connection downloads (browsers, Steam, torrents, download managers) get roughly the combined bandwidth. A **single TCP stream cannot go faster than one link** without an aggregation point on the internet side; that's only a future idea (§15). M7 bonding itself needs **no server of any kind**.
 - Sticky sessions: flows to the same destination stay on the same member for a set time, so logins and sessions don't break.
 - Members that go down are removed from the group, and their flows are re-dialed where possible.
 
@@ -262,16 +263,16 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 ## 9. Distribution
 - **MSI** built with the WiX Toolset. MSIX isn't used because it can't install the Wintun driver adapter or a LocalSystem service cleanly.
 - Installer: installs the service, Wintun, the UI and Start menu shortcuts, with the option "Start LEO at login".
-- Everything signed with the **INFERSTELLEN** code-signing certificate (Authenticode + timestamp).
+- Everything signed through **SignPath Foundation** (Authenticode + timestamp) in the GitHub Actions release workflow. Signed builds only come from CI; local dev builds stay unsigned (Smart App Control off on the dev PC).
 - **Hosting: GitHub Releases** at https://github.com/unterstellen/leo-windows/releases (public repo). Each release has the signed `LEO-<version>-x64.msi` attached. Tags look like `v0.2.0`.
-- **Auto-update**: the service calls `GET https://api.github.com/repos/unterstellen/leo-windows/releases/latest` (anonymous; GitHub allows 60 requests/hour per IP, so it checks at most every 6 h), compares the tag (`v0.2.0`) with its own version, downloads the MSI asset, **verifies the Authenticode signature is INFERSTELLEN and valid**, then installs silently and restarts. The user can defer it. The Canary channel reads pre-releases instead of `latest`.
+- **Auto-update**: the service calls `GET https://api.github.com/repos/unterstellen/leo-windows/releases/latest` (anonymous; GitHub allows 60 requests/hour per IP, so it checks at most every 6 h), compares the tag (`v0.2.0`) with its own version, downloads the MSI asset, **verifies the MSI has a valid Authenticode signature from the same certificate as the installed LEO**, then installs silently and restarts. The user can defer it. The Canary channel reads pre-releases instead of `latest`.
 - Channels: `canary` (git branch `canary`) → `main` (stable).
 
 ---
 
 ## 10. Out of Scope (v1)
-- ARM64, Windows 10, macOS/Linux.
-- Single-stream bonding via a remote aggregation server ("LEO Bond Server"), a possible v2.
+- Windows 10, macOS/Linux. ARM64 comes after v1.
+- Single-stream bonding via an aggregation point ("Bond Server"): **not planned**, kept as a future idea (§15). LEO uses no hosted servers, ever.
 - CLI and global hotkeys (could come later).
 - Cloud sync, accounts, Microsoft Store, winget.
 - Bandwidth limiting/QoS per app (a possible later feature).
@@ -309,7 +310,8 @@ leo-windows/
 | **M5** | Profiles + Stats | Profiles with triggers; per-adapter/per-app stats; connections view |
 | **M6** | VPN coexistence | VPN as underlay + as target + bypass; kill-switch detection |
 | **M7** | Bonding | Bond groups, balancing modes, sticky sessions |
-| **M8** | Ship | WiX MSI, signing, auto-update, uninstall cleanup, hardening, docs |
+| **M8** | Ship | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, SignPath signing in GitHub Actions, GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
+| *Future idea* | Bond through your own PC | Not planned. Single-stream bonding via the user's own second PC, never a hosted server (§15) |
 
 ---
 
@@ -374,11 +376,55 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 ---
 
 ## 13. Resolved Questions (2026-11-20)
-1. **Signing identity**: INFERSTELLEN. Used for UAC/SmartScreen publisher, the pipe-client check (§4.2) and the update check (§9).
+1. **Signing**: ~~INFERSTELLEN certificate~~ → **SignPath Foundation** (2026-11-20). The publisher shown by Windows is "SignPath Foundation"; the pipe-client check (§4.2) and the update check (§9) compare against the release certificate rather than a fixed name.
 2. **Branding**: follow Windows 11, with no custom colors. Logo = yellow face + dark glasses, no other features. Source `assets/leo.svg`, rendered by `tools/make-icon.ps1` into `src/LEO.App/Assets/leo.ico` (16–256 px; a simplified, bolder variant at ≤ 24 px for the tray). One icon works on both light and dark taskbars.
 3. **Update hosting**: GitHub Releases on the public repo https://github.com/unterstellen/leo-windows.
 4. **Health probe**: Microsoft NCSI + Cloudflare fallback, configurable (§5.7).
 5. **Localization**: English only, permanently.
 
 ## 14. Open Questions
-None right now.
+1. Contributions: should outside contributors sign off (DCO, `git commit -s`) or a CLA? Not needed until the repo accepts pull requests from others.
+
+**Resolved 2026-11-20 — License: GPL-3.0-or-later.** Every fork or redistribution must stay open source under the GPL, which keeps LEO free forever. GPL-compatible components (GPL, LGPL, MIT, Apache-2.0, BSD) may be reused. The official text is in `LICENSE`; the build metadata (`PackageLicenseExpression`) and Settings → About say so.
+
+---
+
+## 15. Future idea (not planned): Bond through your own PC
+
+**Status:** not planned (decided 2026-11-20). LEO is free and open source and will **never depend on hosted servers**. Bonding in v1 (M7) needs no server at all and stays in the plan. This section only records the idea and its limits.
+
+### 15.1 The limit it would remove
+M7 bonding spreads *connections* across networks: browsing, Steam, torrents and download managers get roughly the combined speed. A **single** connection (one big file over one connection) can't be split, because the website only knows one of the PC's public addresses. Splitting it needs a **meeting point on the internet side** that collects the pieces and talks to the website with one address.
+
+### 15.2 Whose computer could be that meeting point?
+- **A hosted server (VPS / INFERSTELLEN service): ruled out.** No hosting, no running costs, no dependency on anyone's infrastructure.
+- **Other LEO users' PCs: ruled out.** Traffic would leave from a stranger's home connection (they could see it, and everything would appear to come from their address, a privacy and legal problem for both). It wouldn't even be faster: downloads would be capped by that person's home *upload* speed.
+- **The user's own second PC: possible, in one situation.** E.g. a home desktop on fast fiber while the laptop is elsewhere with Wi-Fi + a phone. LEO on the laptop would tunnel over all its networks to LEO on the home PC, which reassembles and fetches from the internet.
+  - Needs: the second PC always on, reachable from outside (port forwarding/UPnP; carrier-grade NAT blocks it), and a fast **upload**, because every download passes *out* of it.
+  - Useless when both machines share the same home connection (the common case).
+
+### 15.3 If it is ever built
+- A "relay" mode in LEO itself (no separate server software): pair two of the user's own PCs with a code.
+- Encrypted UDP tunnel per network with a packet scheduler and reorder buffer (WireGuard-style Noise + ChaCha20-Poly1305) or multipath QUIC, built on the M3 engine; bonded groups gain a "via my PC" option.
+- Extras it would bring: connections that survive a network dropping (no new public IP), and an optional redundant mode for calls/games.
+
+---
+
+## 16. Release readiness: "works on anyone's PC"
+
+Goal: anyone on Windows 11 x64 downloads LEO from GitHub Releases, installs it with one admin prompt, and it just works. Status as of 2026-11-20: **runs only as a developer build**. Everything below is part of M8 unless noted.
+
+| Area | Needed for release | Status |
+|---|---|---|
+| Install | WiX MSI: service in Program Files, Start menu entry, optional "start at login", one admin prompt | Dev script only |
+| Prerequisites | **Self-contained** builds: .NET runtime and Windows App SDK bundled, nothing to install first | App/service currently need .NET 10 installed |
+| Signing | **SignPath Foundation** signs MSI + all binaries in a GitHub Actions workflow. Unsigned builds are **blocked by Smart App Control** (on by default on many fresh Windows 11 PCs) and warned about by SmartScreen | Not set up. Apply to SignPath once the release workflow exists |
+| Updates | GitHub Releases + in-app updater (§9), signature-checked | Designed, not built |
+| Uninstall | Removes service, Wintun, metric overrides, DNS changes; restores Windows networking; keeps or asks about config | Partly (service stop restores metrics) |
+| Hardware coverage | Public **beta** on GitHub Releases (pre-release) before v1; test matrix: Intel / Realtek / MediaTek / Qualcomm Wi-Fi, USB Ethernet dongles, Android + **iPhone** USB tethering, Bluetooth PAN, docks; with common VPNs (WireGuard, OpenVPN, commercial), antivirus suites and Windows Firewall on | Tested on one PC (Qualcomm DBS Wi-Fi, Android tether, Tailscale) |
+| Graceful limits | Features that a driver/PC can't do (e.g. dual link, secondary stations) hide or explain themselves instead of failing | Done for Wi-Fi dual link / secondary STA |
+| Antivirus | Signed releases + submitting each release to Microsoft Defender's false-positive portal; the M3 virtual adapter (Wintun) is Microsoft-signed | Not started |
+| Managed PCs | Document: needs admin to install; company policies may block services/drivers | — |
+| Docs | README (what it does, screenshots, install, uninstall, limits), CONTRIBUTING, privacy statement ("no telemetry, no accounts, no servers") | `LICENSE` done (GPL-3.0-or-later) |
+
+Platform scope (decided 2026-11-20): **Windows 11 only, x64 only for v1**; ARM64 after v1; no Windows 10.

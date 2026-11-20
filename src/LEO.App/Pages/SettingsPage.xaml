@@ -113,10 +113,13 @@
                         <Run Text="LEO" /> <Run Text="{x:Bind ViewModel.AppVersion}" />
                     </TextBlock>
                     <TextBlock Text="{x:Bind ViewModel.PublisherLine}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                               Text="Free and open source, forever. Licensed under the GNU General Public License v3.0 or later. LEO comes with ABSOLUTELY NO WARRANTY." />
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <HyperlinkButton Content="unterstellen.org" NavigateUri="https://unterstellen.org" Padding="0" />
                         <HyperlinkButton Content="inferstellen.com" NavigateUri="https://inferstellen.com" Padding="0" />
                         <HyperlinkButton Content="Source &amp; releases on GitHub" NavigateUri="https://github.com/unterstellen/leo-windows" Padding="0" />
+                        <HyperlinkButton Content="License (GPL-3.0)" NavigateUri="https://www.gnu.org/licenses/gpl-3.0.html" Padding="0" />
                     </StackPanel>
                 </StackPanel>
             </Border>

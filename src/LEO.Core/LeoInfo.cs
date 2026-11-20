@@ -11,6 +11,10 @@ public static class LeoInfo
     public const string Company = "INFERSTELLEN";
     public const string CompanyUrl = "https://inferstellen.com";
 
+    /// <summary>LEO is free software: GNU GPL v3 or (at your option) any later version. See LICENSE.</summary>
+    public const string License = "GPL-3.0-or-later";
+    public const string LicenseUrl = "https://www.gnu.org/licenses/gpl-3.0.html";
+
     /// <summary>Public source repository; releases here are LEO's update channel (LEO.md §9).</summary>
     public const string RepositoryUrl = "https://github.com/unterstellen/leo-windows";
     public const string ReleasesUrl = RepositoryUrl + "/releases";
