@@ -61,6 +61,26 @@ public sealed class HealthSettings
     ];
 }
 
+public static class HealthSettingsValidator
+{
+    /// <summary>Returns a user-facing problem, or null when the settings are acceptable.</summary>
+    public static string? Validate(HealthSettings s)
+    {
+        if (s.ProbeIntervalSeconds is < 2 or > 300) return "Check interval must be 2–300 seconds.";
+        if (s.FailoverDelaySeconds is < 1 or > 300) return "Failover delay must be 1–300 seconds.";
+        if (s.FailbackDelaySeconds is < 5 or > 3600) return "Switch-back delay must be 5–3600 seconds.";
+        if (s.SlowLatencyMs is < 100 or > 10000) return "Slow threshold must be 100–10000 ms.";
+        if (s.ProbeTargets.Count is < 1 or > 4) return "Use 1 to 4 probe addresses.";
+        foreach (var t in s.ProbeTargets)
+        {
+            if (!Uri.TryCreate(t.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+                return $"'{t.Url}' isn't an http(s) address.";
+            if (string.IsNullOrWhiteSpace(t.Expect)) return $"Say what '{t.Url}' should answer (\"204\" or the exact text).";
+        }
+        return null;
+    }
+}
+
 public sealed class ProbeTarget
 {
     public string Url { get; set; } = "";

@@ -21,6 +21,9 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
     private readonly Dictionary<Guid, DateTimeOffset> _nextAttempt = [];
     private readonly Dictionary<Guid, DateTimeOffset> _lastScan = [];
     private readonly HashSet<string> _passwordWarned = [];
+    private readonly HashSet<Guid> _radioOff = [];
+    private readonly HashSet<string> _forgottenWarned = [];
+    private readonly ForgetTracker _forgets = new();
     private WlanApi? _wlan;
 
     private volatile IReadOnlyDictionary<string, DualLinkState> _dualLink = new Dictionary<string, DualLinkState>();
@@ -157,10 +160,16 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
         await Task.CompletedTask;
     }
 
-    public async Task ConnectAsync(string adapterId, string ssid, string? password, CancellationToken ct)
+    /// <param name="userInitiated">true for a Connect click in LEO; false for automatic pin reconnects.</param>
+    public async Task ConnectAsync(string adapterId, string ssid, string? password, CancellationToken ct, bool userInitiated = true)
     {
         var iface = ParseId(adapterId);
-        var profile = await WithWlan(w => EnsureProfile(w, iface, ssid, password), ct);
+        if (userInitiated)
+        {
+            // A manual connect is in progress: keep the pin check from starting a second, competing connect.
+            lock (_nextAttempt) _nextAttempt[iface] = DateTimeOffset.Now + RetryBackoff;
+        }
+        var profile = await WithWlan(w => EnsureProfile(w, iface, ssid, password, userInitiated), ct);
         await WithWlan(w =>
         {
             try
@@ -210,6 +219,7 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
             try
             {
                 await RefreshDualLinkAsync(applyDesired: true, stoppingToken);
+                await FollowUserForgetsAsync(stoppingToken); // before pins: a forgotten network must never come back
                 await EnforcePinsAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -224,6 +234,70 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
             try { await _wake.WaitAsync(EnforceInterval, stoppingToken); }
             catch (OperationCanceledException) { break; }
         }
+    }
+
+    /// <summary>
+    /// When the user forgets a network in any Windows menu, forget it on every adapter (including hidden secondary
+    /// stations Windows' menus can't reach) and drop it from all pins. LEO never forgets a network on its own.
+    /// </summary>
+    private async Task FollowUserForgetsAsync(CancellationToken ct)
+    {
+        var snapshot = await WithWlan(ReadProfiles, ct);
+        var forgotten = _forgets.Update(snapshot);
+        if (forgotten.Count == 0) return;
+
+        var removed = await WithWlan(w =>
+        {
+            var count = 0;
+            foreach (var (iface, snap) in snapshot)
+            {
+                foreach (var (profile, ssid) in snap.Profiles)
+                {
+                    if (!forgotten.Contains(ssid)) continue;
+                    _forgets.Suppress(iface, profile); // our delete, not the user's
+                    try
+                    {
+                        if (w.DeleteProfile(iface, profile)) count++;
+                    }
+                    catch (Exception ex)
+                    {
+                        log.LogWarning("Couldn't forget '{Profile}' on {Adapter}: {Message}", profile, iface, ex.Message);
+                    }
+                }
+            }
+            return count;
+        }, ct);
+
+        config.Update(c =>
+        {
+            var changed = false;
+            foreach (var a in c.Adapters) changed |= a.PinnedSsids.RemoveAll(forgotten.Contains) > 0;
+            return changed;
+        });
+
+        foreach (var ssid in forgotten)
+        {
+            log.LogInformation("User forgot Wi-Fi '{Ssid}' in Windows: removed it from {Count} other adapter(s) and from pins", ssid, removed);
+            notifications.Publish(NotificationKind.WifiReconnected, "Wi-Fi network forgotten everywhere",
+                $"You forgot '{ssid}' in Windows, so LEO removed it from every Wi-Fi adapter and stopped keeping any adapter on it.");
+        }
+        ConnectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static IReadOnlyDictionary<Guid, ProfileSnapshot> ReadProfiles(WlanApi w)
+    {
+        var map = new Dictionary<Guid, ProfileSnapshot>();
+        foreach (var i in w.GetInterfaces())
+        {
+            var profiles = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var name in w.GetProfileNames(i.Id))
+            {
+                // SSID from the profile (no key requested); fall back to the name (Windows names profiles after the SSID).
+                profiles[name] = WifiProfiles.SsidOf(w.GetProfileXml(i.Id, name, includeKey: false) ?? "") ?? name;
+            }
+            map[i.Id] = new ProfileSnapshot(i.IsSecondary, profiles);
+        }
+        return map;
     }
 
     private async Task EnforcePinsAsync(CancellationToken ct)
@@ -254,16 +328,42 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
                 await Task.Delay(TimeSpan.FromSeconds(3.5), ct);
             }
 
-            var visible = await WithWlan(w => VisibleFor(w, iface), ct);
+            IReadOnlyList<WlanApi.AvailableNetwork> visible;
+            try
+            {
+                visible = await WithWlan(w => VisibleFor(w, iface), ct);
+                if (_radioOff.Remove(iface)) log.LogInformation("Wi-Fi is back on for {Adapter}; pins active again", id);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.StartsWith("Wi-Fi is turned off", StringComparison.Ordinal))
+            {
+                // The user switched Wi-Fi off: nothing to enforce. Say so once, not every 15 s.
+                if (_radioOff.Add(iface)) log.LogInformation("Wi-Fi is switched off for {Adapter}; pins paused until it's back on", id);
+                continue;
+            }
             var target = pins.FirstOrDefault(p => visible.Any(v => v.Ssid == p && v.Connectable));
             if (target is null) continue; // no pinned network in range
 
             try
             {
-                await ConnectAsync(id, target, password: null, ct);
-                var name = nickname ?? interfaces.First(i => i.Id == iface).Description;
+                await ConnectAsync(id, target, password: null, ct, userInitiated: false);
+                _forgottenWarned.Remove($"{id}|{target}");
+                // Nickname, else the Windows adapter name ("WiFi"), never the long driver description.
+                var name = nickname
+                    ?? System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+                        .FirstOrDefault(n => Guid.TryParse(n.Id, out var g) && g == iface)?.Name
+                    ?? interfaces.First(i => i.Id == iface).Description;
                 notifications.Publish(NotificationKind.WifiReconnected, "Wi-Fi reconnected",
                     $"{name} is back on '{target}'.", id);
+            }
+            catch (ProfileMissingException)
+            {
+                // The user forgot this network in Windows (or never saved it on this adapter): respect that.
+                if (_forgottenWarned.Add($"{id}|{target}"))
+                {
+                    log.LogInformation("Pinned network '{Ssid}' isn't saved on {Adapter} (forgotten in Windows?); not reconnecting automatically.", target, id);
+                    notifications.Publish(NotificationKind.WifiReconnected, "Wi-Fi not reconnected",
+                        $"'{target}' is no longer saved on this adapter, so LEO won't reconnect it by itself. Connect once from LEO's Wi-Fi networks to restore it, or untick Keep connected.", id);
+                }
             }
             catch (PasswordRequiredException)
             {
@@ -284,8 +384,12 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
     /// <summary>
     /// Returns a profile name on <paramref name="iface"/> for <paramref name="ssid"/>: an existing one, one copied
     /// from another Wi-Fi adapter, or a new one built from <paramref name="password"/>.
+    /// <para>
+    /// Copying (and creating) only happens when <paramref name="userInitiated"/>: an automatic pin reconnect must
+    /// never resurrect a network the user "forgot" in Windows from a copy on another adapter.
+    /// </para>
     /// </summary>
-    private string EnsureProfile(WlanApi w, Guid iface, string ssid, string? password)
+    private string EnsureProfile(WlanApi w, Guid iface, string ssid, string? password, bool userInitiated)
     {
         var network = VisibleFor(w, iface).Where(n => n.Ssid == ssid)
             .OrderByDescending(n => n.HasProfile).FirstOrDefault();
@@ -298,6 +402,8 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
             {
                 if (w.GetProfileXml(iface, name) is { } own && WifiProfiles.SsidOf(own) == ssid) return name;
             }
+
+            if (!userInitiated) throw new ProfileMissingException(ssid);
 
             // Saved on another adapter (e.g. the primary Wi-Fi port) → copy it here (key included, SYSTEM only).
             foreach (var other in w.GetInterfaces().Where(i => i.Id != iface))
@@ -339,10 +445,32 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
     /// </summary>
     private static IReadOnlyList<WlanApi.AvailableNetwork> VisibleFor(WlanApi w, Guid iface)
     {
-        var own = w.GetAvailableNetworks(iface);
+        // An idle secondary station (dual link off) reports a radio power-state error (0x80342002) instead of a
+        // list; one sleeping radio must not break the whole answer, so every read here is best-effort.
+        static IReadOnlyList<WlanApi.AvailableNetwork> TryList(WlanApi w, Guid id)
+        {
+            try { return w.GetAvailableNetworks(id); }
+            catch (InvalidOperationException) { return []; }
+        }
+
+        IReadOnlyList<WlanApi.AvailableNetwork> own;
+        try
+        {
+            own = w.GetAvailableNetworks(iface);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("-2144067582", StringComparison.Ordinal) && // 0x80342002 power state
+                                                   w.GetInterfaces().Any(i => i.Id == iface && !i.IsSecondary))
+        {
+            throw new InvalidOperationException(
+                "Wi-Fi is turned off for this adapter (the Windows Wi-Fi switch or airplane mode). Turn Wi-Fi on to see networks.");
+        }
+        catch (InvalidOperationException)
+        {
+            own = []; // idle secondary station: use its siblings' view below
+        }
         if (own.Count > 0) return own;
         return w.GetInterfaces().Where(i => i.Id != iface)
-            .SelectMany(i => w.GetAvailableNetworks(i.Id))
+            .SelectMany(i => TryList(w, i.Id))
             .Select(n => n with { IsConnected = false, HasProfile = false, ProfileName = "" })
             .ToList();
     }
@@ -398,6 +526,12 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
 /// <param name="Enabled">Synchronized dual-station mode is on for the pair.</param>
 /// <param name="PrimaryId">Set on a secondary station: the primary it follows.</param>
 public sealed record DualLinkState(bool Supported, bool Enabled, string? PrimaryId, IReadOnlyList<string> SecondaryIds);
+
+/// <summary>No saved profile on this adapter, and LEO may not copy one (automatic reconnect).</summary>
+public sealed class ProfileMissingException(string ssid) : Exception($"'{ssid}' isn't saved on this adapter.")
+{
+    public string Ssid { get; } = ssid;
+}
 
 /// <summary>The network needs a passphrase LEO doesn't have.</summary>
 public sealed class PasswordRequiredException(string ssid) : Exception($"'{ssid}' needs a password.")

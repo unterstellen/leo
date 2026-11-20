@@ -119,6 +119,36 @@ public sealed class NetworkManager(
         await RefreshAsync(rescan: false, ct);
     }
 
+    public HealthSettings GetHealthSettings() => config.Read(c => new HealthSettings
+    {
+        AutoFailover = c.Health.AutoFailover,
+        ProbeIntervalSeconds = c.Health.ProbeIntervalSeconds,
+        FailoverDelaySeconds = c.Health.FailoverDelaySeconds,
+        FailbackDelaySeconds = c.Health.FailbackDelaySeconds,
+        SlowLatencyMs = c.Health.SlowLatencyMs,
+        ProbeTargets = c.Health.ProbeTargets.Select(t => new ProbeTarget { Url = t.Url, Expect = t.Expect }).ToList(),
+    });
+
+    public async Task SetHealthSettingsAsync(HealthSettings s, CancellationToken ct)
+    {
+        s.ProbeTargets = s.ProbeTargets.Where(t => !string.IsNullOrWhiteSpace(t.Url))
+            .Select(t => new ProbeTarget { Url = t.Url.Trim(), Expect = t.Expect.Trim() }).ToList();
+        if (HealthSettingsValidator.Validate(s) is { } problem) throw new ArgumentException(problem);
+
+        config.Update(c =>
+        {
+            c.Health.ProbeIntervalSeconds = s.ProbeIntervalSeconds;
+            c.Health.FailoverDelaySeconds = s.FailoverDelaySeconds;
+            c.Health.FailbackDelaySeconds = s.FailbackDelaySeconds;
+            c.Health.SlowLatencyMs = s.SlowLatencyMs;
+            c.Health.ProbeTargets = s.ProbeTargets; // AutoFailover has its own switch
+            return true;
+        });
+        log.LogInformation("Internet-check settings: every {Interval}s, failover {Failover}s, switch back {Failback}s, slow > {Slow} ms, {Count} target(s)",
+            s.ProbeIntervalSeconds, s.FailoverDelaySeconds, s.FailbackDelaySeconds, s.SlowLatencyMs, s.ProbeTargets.Count);
+        await RefreshAsync(rescan: false, ct);
+    }
+
     public AdapterInfo Find(string adapterId) =>
         Snapshot.Adapters.FirstOrDefault(a => a.Id.Equals(adapterId, StringComparison.OrdinalIgnoreCase))
         ?? throw new KeyNotFoundException($"Adapter {adapterId} not found.");
@@ -374,12 +404,26 @@ public sealed class NetworkManager(
                 Changed?.Invoke(this, snapshot);
             }
             _userChangedPriority = false;
+
+            if (snapshot.PrimaryAdapterId is not null)
+            {
+                _noNetworkSince = null;
+            }
+            else if (_noNetworkSince is { } lost && DateTimeOffset.Now - lost.Since >= NoNetworkGrace)
+            {
+                notifications.Publish(NotificationKind.NoInternetAnywhere, "No network available",
+                    $"{lost.Label} dropped and no other network has taken over.");
+                _noNetworkSince = null;
+            }
         }
         finally
         {
             _refreshGate.Release();
         }
     }
+
+    private static readonly TimeSpan NoNetworkGrace = TimeSpan.FromSeconds(10);
+    private (DateTimeOffset Since, string Label)? _noNetworkSince;
 
     /// <summary>Turns snapshot differences into user notifications (LEO.md §6.10).</summary>
     private void Announce(NetworkSnapshot before, NetworkSnapshot after)
@@ -394,9 +438,9 @@ public sealed class NetworkManager(
             var oldNow = oldPrimary is null ? null : after.Adapters.FirstOrDefault(a => a.Id == oldPrimary.Id);
             if (newPrimary is null)
             {
-                if (oldPrimary is not null)
-                    notifications.Publish(NotificationKind.NoInternetAnywhere, "No network available",
-                        $"{Label(oldPrimary)} dropped and no other network can take over.");
+                // Don't cry wolf: another network often takes over within seconds (DHCP, link settling).
+                // Remember it and announce only if nothing has taken over after NoNetworkGrace (see RefreshAsync).
+                if (oldPrimary is not null) _noNetworkSince ??= (DateTimeOffset.Now, Label(oldPrimary));
             }
             else if (oldNow is { IsDemoted: true })
             {
@@ -444,11 +488,12 @@ public sealed class NetworkManager(
 
             var rc4 = IpHelper.SetMetric(a.InterfaceIndex, AddressFamily.InterNetwork, target);
             IpHelper.SetMetric(a.InterfaceIndex, AddressFamily.InterNetworkV6, target); // IPv6 may be unbound
-            if (rc4 == 0)
+            if (rc4 is 0 or IpHelper.AlreadySet)
             {
                 lock (_pinnedInterfaces) _pinnedInterfaces.Add(a.InterfaceIndex);
                 metrics[a.Id] = (target, false);
-                log.LogInformation("Metric {Adapter} -> {Metric}", a.Name, target);
+                // Between full scans the cached metric can be stale; only a real change is worth a log line.
+                if (rc4 == 0) log.LogInformation("Metric {Adapter} -> {Metric}", a.Name, target);
             }
             else if (rc4 != 1168) // ERROR_NOT_FOUND: no IPv4 interface (adapter unbound) — not worth a warning
             {

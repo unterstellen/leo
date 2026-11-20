@@ -26,7 +26,7 @@ public static class LeoInfo
     public const string ControlPipeName = "LEO.Control";
 
     /// <summary>IPC protocol version; bump on breaking contract changes.</summary>
-    public const int ProtocolVersion = 4;
+    public const int ProtocolVersion = 5;
 
     public static string Version { get; } =
         typeof(LeoInfo).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()

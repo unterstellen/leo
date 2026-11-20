@@ -68,6 +68,12 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
     public Task SetAutoFailoverAsync(bool enabled, CancellationToken cancellationToken = default) =>
         Mutate(nameof(SetAutoFailoverAsync), () => Networks.SetAutoFailoverAsync(enabled, cancellationToken));
 
+    public Task<Leo.Core.Config.HealthSettings> GetHealthSettingsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(Networks.GetHealthSettings());
+
+    public Task SetHealthSettingsAsync(Leo.Core.Config.HealthSettings settings, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SetHealthSettingsAsync), () => Networks.SetHealthSettingsAsync(settings, cancellationToken));
+
     // ── Wi-Fi ───────────────────────────────────────────────────────────────
 
     public async Task<IReadOnlyList<WifiNetworkInfo>> GetWifiNetworksAsync(string adapterId, bool rescan, CancellationToken cancellationToken = default)
@@ -77,9 +83,9 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
         {
             return await Wifi.GetNetworksAsync(adapterId, rescan, cancellationToken);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        catch (Exception ex) when (Unwrap(ex) is InvalidOperationException or ArgumentException)
         {
-            throw new LocalRpcException(ex.Message) { ErrorCode = LeoErrorCodes.InvalidOperation };
+            throw new LocalRpcException(Unwrap(ex).Message) { ErrorCode = LeoErrorCodes.InvalidOperation };
         }
     }
 
@@ -175,6 +181,9 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
             throw new LocalRpcException(ex.Message) { ErrorCode = LeoErrorCodes.InvalidOperation };
         }
     }
+
+    private static Exception Unwrap(Exception ex) =>
+        ex is AggregateException { InnerExceptions.Count: 1 } agg ? Unwrap(agg.InnerException!) : ex;
 
     private void OnStatusChanged(object? sender, EngineStatus e) => StatusChanged?.Invoke(this, e);
 

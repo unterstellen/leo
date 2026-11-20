@@ -20,13 +20,19 @@ internal static class IpHelper
             : null;
     }
 
-    /// <summary>Pins a manual metric (UseAutomaticMetric = false). Returns the Win32 error code (0 = success).</summary>
+    /// <summary>Returned by <see cref="SetMetric"/> when the interface already had that manual metric.</summary>
+    public const int AlreadySet = -1;
+
+    /// <summary>
+    /// Pins a manual metric (UseAutomaticMetric = false). Returns 0 when changed, <see cref="AlreadySet"/> when it
+    /// was already in place, otherwise the Win32 error code.
+    /// </summary>
     public static int SetMetric(int interfaceIndex, AddressFamily family, int metric)
     {
         var row = NewRow(interfaceIndex, family);
         var rc = GetIpInterfaceEntry(ref row);
         if (rc != 0) return rc;
-        if (row.UseAutomaticMetric == 0 && row.Metric == (uint)metric) return 0;
+        if (row.UseAutomaticMetric == 0 && row.Metric == (uint)metric) return AlreadySet;
 
         row.UseAutomaticMetric = 0;
         row.Metric = (uint)metric;

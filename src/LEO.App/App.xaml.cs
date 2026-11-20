@@ -20,6 +20,18 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
+
+        // A tray app must not vanish on one bad click: log every unhandled UI exception and keep running.
+        UnhandledException += (_, e) =>
+        {
+            UiLog.Write($"Unhandled UI exception: {e.Message}", e.Exception);
+            e.Handled = true;
+        };
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            UiLog.Write("Unobserved task exception", e.Exception);
+            e.SetObserved();
+        };
     }
 
     public static new App Current => (App)Application.Current;

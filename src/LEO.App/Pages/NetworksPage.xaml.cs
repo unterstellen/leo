@@ -31,32 +31,76 @@ public sealed partial class NetworksPage : Page
 
     private void ErrorBar_Closed(InfoBar sender, InfoBarClosedEventArgs args) => ViewModel.DismissError();
 
+    // WinUI allows one ContentDialog at a time; a second ShowAsync throws (and async void would crash the app).
+    private static bool _dialogOpen;
+
     private async void DualLink_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.Tag is AdapterCardViewModel card) await ViewModel.ToggleDualLinkAsync(card);
+        try
+        {
+            if ((sender as FrameworkElement)?.Tag is AdapterCardViewModel card) await ViewModel.ToggleDualLinkAsync(card);
+        }
+        catch (Exception ex)
+        {
+            Fail("Dual link", ex);
+        }
     }
 
     private async void Wifi_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.Tag is not AdapterCardViewModel card) return;
-
-        var vm = new WifiNetworksViewModel(ViewModel.Connection, card.Info, ViewModel.CanEdit);
-        var dialog = new ContentDialog
+        if ((sender as FrameworkElement)?.Tag is not AdapterCardViewModel card || _dialogOpen) return;
+        _dialogOpen = true;
+        try
         {
-            XamlRoot = XamlRoot,
-            Title = $"Wi-Fi networks · {card.Info.DisplayName}",
-            Content = new Controls.WifiNetworksPanel(vm),
-            CloseButtonText = "Done",
-            DefaultButton = ContentDialogButton.Close,
-        };
-        dialog.Resources["ContentDialogMaxWidth"] = 640.0;
-        _ = vm.LoadAsync(rescan: false);
-        await dialog.ShowAsync();
+            var vm = new WifiNetworksViewModel(ViewModel.Connection, card.Info, ViewModel.CanEdit);
+            var dialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                Title = $"Wi-Fi networks · {card.Info.DisplayName}",
+                Content = new Controls.WifiNetworksPanel(vm),
+                CloseButtonText = "Done",
+                DefaultButton = ContentDialogButton.Close,
+            };
+            dialog.Resources["ContentDialogMaxWidth"] = 640.0;
+            _ = vm.LoadAsync(rescan: false);
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            Fail("Wi-Fi networks", ex);
+        }
+        finally
+        {
+            _dialogOpen = false;
+        }
+    }
+
+    private void Fail(string what, Exception ex)
+    {
+        Services.UiLog.Write($"{what} failed", ex);
+        ViewModel.ErrorText = $"{what}: {ex.Message}";
     }
 
     private async void Rename_Click(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.Tag is not AdapterCardViewModel card) return;
+        if ((sender as FrameworkElement)?.Tag is not AdapterCardViewModel card || _dialogOpen) return;
+        _dialogOpen = true;
+        try
+        {
+            await RenameAsync(card);
+        }
+        catch (Exception ex)
+        {
+            Fail("Rename", ex);
+        }
+        finally
+        {
+            _dialogOpen = false;
+        }
+    }
+
+    private async Task RenameAsync(AdapterCardViewModel card)
+    {
 
         var adapterBox = new TextBox
         {

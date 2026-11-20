@@ -186,10 +186,13 @@ internal sealed class WlanApi : IDisposable
         }
     }
 
-    /// <summary>Profile XML with the key in plain text (allowed for SYSTEM). Never logged or sent to the UI.</summary>
-    public string? GetProfileXml(Guid iface, string profileName)
+    /// <summary>
+    /// Profile XML. With <paramref name="includeKey"/> the key is in plain text (allowed for SYSTEM; needed only to
+    /// copy a profile). Never logged or sent to the UI.
+    /// </summary>
+    public string? GetProfileXml(Guid iface, string profileName, bool includeKey = true)
     {
-        uint flags = 4; // WLAN_PROFILE_GET_PLAINTEXT_KEY
+        uint flags = includeKey ? 4u : 0u; // WLAN_PROFILE_GET_PLAINTEXT_KEY
         if (WlanGetProfile(_handle, ref iface, profileName, IntPtr.Zero, out var xml, ref flags, out _) != 0) return null;
         try
         {
@@ -216,6 +219,15 @@ internal sealed class WlanApi : IDisposable
             BssType = 1,        // dot11_BSS_type_infrastructure
         };
         Check(WlanConnect(_handle, ref iface, ref p, IntPtr.Zero), nameof(WlanConnect));
+    }
+
+    /// <summary>Deletes a saved profile from one interface. Returns false if it wasn't there.</summary>
+    public bool DeleteProfile(Guid iface, string profileName)
+    {
+        var rc = WlanDeleteProfile(_handle, ref iface, profileName, IntPtr.Zero);
+        if (rc == 1168) return false; // ERROR_NOT_FOUND
+        Check(rc, nameof(WlanDeleteProfile));
+        return true;
     }
 
     public void Disconnect(Guid iface) => Check(WlanDisconnect(_handle, ref iface, IntPtr.Zero), nameof(WlanDisconnect));
@@ -258,5 +270,6 @@ internal sealed class WlanApi : IDisposable
     [DllImport("wlanapi.dll", CharSet = CharSet.Unicode)] private static extern int WlanGetProfile(IntPtr handle, ref Guid iface, string profileName, IntPtr reserved, out IntPtr xml, ref uint flags, out uint access);
     [DllImport("wlanapi.dll", CharSet = CharSet.Unicode)] private static extern int WlanSetProfile(IntPtr handle, ref Guid iface, uint flags, string xml, string? security, bool overwrite, IntPtr reserved, out uint reasonCode);
     [DllImport("wlanapi.dll")] private static extern int WlanConnect(IntPtr handle, ref Guid iface, ref WlanConnectionParameters parameters, IntPtr reserved);
+    [DllImport("wlanapi.dll", CharSet = CharSet.Unicode)] private static extern int WlanDeleteProfile(IntPtr handle, ref Guid iface, string profileName, IntPtr reserved);
     [DllImport("wlanapi.dll")] private static extern int WlanDisconnect(IntPtr handle, ref Guid iface, IntPtr reserved);
 }

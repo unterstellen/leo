@@ -40,6 +40,12 @@ public interface ILeoControl
     /// <summary>Turn automatic failover on/off (probes keep running either way). Full access.</summary>
     Task SetAutoFailoverAsync(bool enabled, CancellationToken cancellationToken = default);
 
+    /// <summary>Internet-check settings: interval, failover/failback delays, slow threshold, probe targets.</summary>
+    Task<Leo.Core.Config.HealthSettings> GetHealthSettingsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Replace the internet-check settings (validated by the service; AutoFailover is kept). Full access.</summary>
+    Task SetHealthSettingsAsync(Leo.Core.Config.HealthSettings settings, CancellationToken cancellationToken = default);
+
     /// <summary>Failover, failback, new adapters… for the tray app to show as Windows notifications.</summary>
     event EventHandler<LeoNotification>? NotificationRaised;
 
