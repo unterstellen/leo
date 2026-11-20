@@ -25,7 +25,10 @@ public sealed class HostedServiceTests(ITestOutputHelper output)
         builder.Services.AddSingleton(new ConfigStore(configPath));
         builder.Services.AddSingleton<EngineStatusProvider>();
         builder.Services.AddSingleton<NetworkInventory>();
-        builder.Services.AddSingleton<NetworkManager>();
+        builder.Services.AddSingleton<NotificationHub>();
+        builder.Services.AddSingleton(sp => new NetworkManager(sp.GetRequiredService<NetworkInventory>(),
+            sp.GetRequiredService<ConfigStore>(), sp.GetRequiredService<NotificationHub>(),
+            sp.GetRequiredService<ILogger<NetworkManager>>()) { ProbesEnabled = false });
         builder.Services.AddHostedService<EngineHeartbeat>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<NetworkManager>());
         builder.Services.AddHostedService(sp => new ControlPipeServer(

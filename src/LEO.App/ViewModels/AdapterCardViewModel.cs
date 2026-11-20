@@ -35,6 +35,14 @@ public sealed partial class AdapterCardViewModel : ObservableObject
     [ObservableProperty] public partial bool CanMoveUp { get; set; }
     [ObservableProperty] public partial bool CanMoveDown { get; set; }
     [ObservableProperty] public partial bool CanEdit { get; set; }
+    [ObservableProperty] public partial bool IsDemoted { get; set; }
+    [ObservableProperty] public partial string DemotedText { get; set; } = "";
+    [ObservableProperty] public partial bool IsWifi { get; set; }
+    [ObservableProperty] public partial string PinsText { get; set; } = "";
+    [ObservableProperty] public partial bool ShowDualLinkButton { get; set; }
+    [ObservableProperty] public partial string DualLinkButtonText { get; set; } = "";
+    [ObservableProperty] public partial string DualLinkText { get; set; } = "";
+    [ObservableProperty] public partial bool ShowWifiButton { get; set; }
 
     public void Update(AdapterInfo info, int candidateCount, bool canEdit)
     {
@@ -49,19 +57,32 @@ public sealed partial class AdapterCardViewModel : ObservableObject
             ? (n.Nickname is null ? n.Name : $"{n.Nickname} ({n.Name})")
             : info.Status == AdapterStatus.Connecting ? "Connecting…" : "Not connected";
 
-        StatusText = info.Status switch
-        {
-            AdapterStatus.Up => info.Network?.Connectivity switch
-            {
-                Connectivity.Internet => "Internet",
-                Connectivity.ConstrainedInternet => "Sign-in or limited",
-                Connectivity.LocalAccess => "No internet",
-                _ => "Connected",
-            },
-            AdapterStatus.Connecting => "Connecting",
-            _ => "Disconnected",
-        };
+        StatusText = HealthText(info);
         if (info.Network?.IsMetered == true) StatusText += " · Metered";
+
+        IsDemoted = info.IsDemoted;
+        DemotedText = info.FailbackInSeconds is { } back
+            ? $"Skipped (failover) · back in {back}s if it stays healthy"
+            : "Skipped (failover) · no internet";
+        IsWifi = info.Kind == Leo.Core.Networking.AdapterKind.WiFi;
+        PinsText = info.PinnedSsids.Count > 0 ? "Stays on: " + string.Join(", ", info.PinnedSsids) : "";
+
+        // Dual link (DBS secondary station). A secondary can't pick its own network, so no Wi-Fi dialog for it.
+        var isSecondary = info.FollowsAdapterId is not null;
+        ShowWifiButton = IsWifi && !isSecondary;
+        ShowDualLinkButton = info.DualLinkSupported;
+        DualLinkButtonText = info.DualLinkEnabled ? "Turn off dual link" : "Turn on dual link";
+        var secondaryName = _owner.NameOf(info.FollowsAdapterId) ?? "";
+        var secondaryUp = _owner.SecondariesOf(info.Id).Any(s => s.Status == AdapterStatus.Up);
+        DualLinkText = info.DualLinkSupported
+            ? (!info.DualLinkEnabled
+                ? "Dual link off: this card's second station is idle."
+                : secondaryUp
+                    ? "Dual link on: the second station also connects to this network, on the other band."
+                    : "Dual link on, but the second station isn't connected: Windows keeps trying and the Wi-Fi driver declines on this network.")
+            : isSecondary
+                ? $"Second station of {secondaryName} · follows its network · dual link {(info.DualLinkEnabled ? "on" : "off")}"
+                : "";
 
         var details = new List<string>();
         if (info.IPv4.FirstOrDefault(ip => !ip.StartsWith("169.254.", StringComparison.Ordinal)) is { } ip) details.Add($"IP {ip}");
@@ -86,6 +107,31 @@ public sealed partial class AdapterCardViewModel : ObservableObject
 
     [RelayCommand]
     private Task MoveDownAsync() => _owner.MoveAsync(this, +1);
+
+    /// <summary>LEO's own probe result in words (VPNs aren't probed; they fall back to Windows' view).</summary>
+    public static string HealthText(AdapterInfo info)
+    {
+        if (info.Status == AdapterStatus.Connecting) return "Connecting";
+        if (info.Status != AdapterStatus.Up) return "Disconnected";
+        if (!info.IsPrimaryCandidate)
+        {
+            return info.Network?.Connectivity switch
+            {
+                Connectivity.Internet => "Internet",
+                Connectivity.LocalAccess => "No internet",
+                _ => "Connected",
+            };
+        }
+        return info.Health switch
+        {
+            Leo.Core.Networking.HealthState.Up => info.LatencyMs is { } ms ? $"Internet · {ms} ms" : "Internet",
+            Leo.Core.Networking.HealthState.Degraded => info.LatencyMs is { } ms ? $"Slow · {ms} ms" : "Slow",
+            Leo.Core.Networking.HealthState.Captive => "Sign-in needed",
+            Leo.Core.Networking.HealthState.NoInternet => "No internet",
+            Leo.Core.Networking.HealthState.Disconnected => "Disconnected",
+            _ => "Checking…",
+        };
+    }
 
     public static string GlyphFor(AdapterKind kind) => kind switch
     {

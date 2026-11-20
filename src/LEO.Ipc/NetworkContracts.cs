@@ -9,7 +9,7 @@ public enum AdapterStatus
     Connecting = 2,
 }
 
-/// <summary>Mirrors Windows' NetworkConnectivityLevel (NLA). Real per-interface probes arrive in M2.</summary>
+/// <summary>Mirrors Windows' NetworkConnectivityLevel (NLA). LEO's own probes are in <see cref="AdapterInfo.Health"/>.</summary>
 public enum Connectivity
 {
     None = 0,
@@ -42,9 +42,18 @@ public sealed record AdapterInfo(
     NetworkInfo? Network,
     int? Metric,            // current IPv4 interface metric
     bool AutomaticMetric,
-    int? PriorityIndex,     // position in LEO's priority list (0 = preferred Primary)
+    int? PriorityIndex,     // position in the user's priority list (0 = preferred Primary)
     bool IsPrimary,
-    bool IsPrimaryCandidate)
+    bool IsPrimaryCandidate,
+    HealthState Health,     // LEO's own internet probe (M2)
+    int? LatencyMs,
+    string? HealthDetail,
+    bool IsDemoted,         // failover: temporarily moved behind healthy networks
+    int? FailbackInSeconds, // when a demoted adapter will be trusted again (if it stays healthy)
+    IReadOnlyList<string> PinnedSsids,
+    bool DualLinkSupported = false,   // Wi-Fi primary with a secondary station (DBS): can run a dual link
+    bool DualLinkEnabled = false,     // dual link on (for both the primary and its secondary)
+    string? FollowsAdapterId = null)  // secondary station: the primary Wi-Fi adapter it follows
 {
     /// <summary>"Network nickname · Adapter nickname" style display name (LEO.md §3).</summary>
     public string DisplayName => Nickname ?? Name;
@@ -54,10 +63,39 @@ public sealed record NetworkSnapshot(
     IReadOnlyList<AdapterInfo> Adapters,
     string? PrimaryAdapterId,
     bool ManageMetrics,
-    DateTimeOffset TakenAt)
+    DateTimeOffset TakenAt,
+    bool AutoFailover = true,
+    bool FailoverActive = false) // the Primary isn't the user's top choice because of failover
 {
     public static NetworkSnapshot Empty { get; } = new([], null, true, DateTimeOffset.MinValue);
 }
+
+public enum NotificationKind
+{
+    Failover = 0,
+    Failback = 1,
+    PrimaryChanged = 2,
+    NewAdapter = 3,
+    CaptivePortal = 4,
+    WifiReconnected = 5,
+    NoInternetAnywhere = 6,
+}
+
+/// <summary>Something the user should hear about; the tray app shows it as a Windows notification.</summary>
+public sealed record LeoNotification(NotificationKind Kind, string Title, string Message, string? AdapterId, DateTimeOffset At);
+
+/// <summary>A Wi-Fi network visible to (or pinned on) one Wi-Fi adapter.</summary>
+public sealed record WifiNetworkInfo(
+    string Ssid,
+    int SignalPercent,      // 0 when not currently visible
+    bool IsVisible,
+    bool IsSecured,
+    string Security,        // "Open", "WPA2-Personal", "WPA3-Personal", "Enterprise", …
+    bool CanJoinWithPassword,
+    bool HasProfile,        // saved on this adapter
+    bool KnownElsewhere,    // saved on another Wi-Fi adapter (LEO copies it over when connecting)
+    bool IsConnected,
+    bool IsPinned);
 
 /// <summary>JSON-RPC error codes returned by LEO.Service.</summary>
 public static class LeoErrorCodes
@@ -65,4 +103,5 @@ public static class LeoErrorCodes
     public const int AccessDenied = -32001;
     public const int NotFound = -32002;
     public const int InvalidOperation = -32003;
+    public const int PasswordRequired = -32004;
 }

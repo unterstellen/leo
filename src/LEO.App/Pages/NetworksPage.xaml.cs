@@ -31,6 +31,29 @@ public sealed partial class NetworksPage : Page
 
     private void ErrorBar_Closed(InfoBar sender, InfoBarClosedEventArgs args) => ViewModel.DismissError();
 
+    private async void DualLink_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is AdapterCardViewModel card) await ViewModel.ToggleDualLinkAsync(card);
+    }
+
+    private async void Wifi_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not AdapterCardViewModel card) return;
+
+        var vm = new WifiNetworksViewModel(ViewModel.Connection, card.Info, ViewModel.CanEdit);
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"Wi-Fi networks · {card.Info.DisplayName}",
+            Content = new Controls.WifiNetworksPanel(vm),
+            CloseButtonText = "Done",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        dialog.Resources["ContentDialogMaxWidth"] = 640.0;
+        _ = vm.LoadAsync(rescan: false);
+        await dialog.ShowAsync();
+    }
+
     private async void Rename_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is not AdapterCardViewModel card) return;

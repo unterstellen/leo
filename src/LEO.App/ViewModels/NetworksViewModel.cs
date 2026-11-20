@@ -32,11 +32,41 @@ public sealed partial class NetworksViewModel : ObservableObject
     [ObservableProperty] public partial string PrimaryDetail { get; set; } = "";
     [ObservableProperty] public partial string PrimaryGlyph { get; set; } = "";
     [ObservableProperty] public partial string? ErrorText { get; set; }
+    [ObservableProperty] public partial bool FailoverActive { get; set; }
+    [ObservableProperty] public partial string FailoverText { get; set; } = "";
+    [ObservableProperty] public partial bool AutoFailover { get; set; } = true;
+
+    private bool _syncingAutoFailover;
+
+    partial void OnAutoFailoverChanged(bool value)
+    {
+        // Only a real change versus the service's current setting is sent (never a binding echo).
+        if (_syncingAutoFailover || value == _connection.Networks.AutoFailover || !CanEdit) return;
+        _ = SetAutoFailoverAsync(value);
+    }
+
+    private async Task SetAutoFailoverAsync(bool value)
+    {
+        var error = await _connection.TryInvokeAsync(c => c.SetAutoFailoverAsync(value));
+        if (error is not null)
+        {
+            ShowError(error);
+            Sync(() => AutoFailover = _connection.Networks.AutoFailover);
+        }
+    }
+
+    private void Sync(Action set)
+    {
+        _syncingAutoFailover = true;
+        try { set(); } finally { _syncingAutoFailover = false; }
+    }
 
     /// <summary>Raised after every refresh so the tray menu can rebuild.</summary>
     public event EventHandler? Refreshed;
 
     public NetworkSnapshot Snapshot => _connection.Networks;
+
+    public ServiceConnection Connection => _connection;
 
     public async Task SetPrimaryAsync(AdapterCardViewModel card) =>
         ShowError(await _connection.TryInvokeAsync(c => c.SetPrimaryAsync(card.Id)));
@@ -74,6 +104,23 @@ public sealed partial class NetworksViewModel : ObservableObject
 
     public void DismissError() => ErrorText = null;
 
+    /// <summary>Display name of an adapter by id (null if unknown).</summary>
+    public string? NameOf(string? adapterId) =>
+        adapterId is null ? null : _connection.Networks.Adapters.FirstOrDefault(a => a.Id == adapterId)?.DisplayName;
+
+    /// <summary>Secondary stations that follow the given primary Wi-Fi adapter.</summary>
+    public IEnumerable<AdapterInfo> SecondariesOf(string primaryId) =>
+        _connection.Networks.Adapters.Where(a => a.FollowsAdapterId == primaryId);
+
+    /// <summary>Only from a real button click on a card.</summary>
+    public async Task ToggleDualLinkAsync(AdapterCardViewModel card)
+    {
+        if (!CanEdit || !card.Info.DualLinkSupported) return;
+        var enable = !card.Info.DualLinkEnabled;
+        UiLog.Write($"Dual link: {(enable ? "on" : "off")} for {card.Info.DisplayName}");
+        ShowError(await _connection.TryInvokeAsync(c => c.SetDualLinkAsync(card.Id, enable)));
+    }
+
     private void ShowError(string? error)
     {
         if (error is not null) ErrorText = error;
@@ -85,6 +132,19 @@ public sealed partial class NetworksViewModel : ObservableObject
         var connected = _connection.State == ConnectionState.Connected;
         CanEdit = connected && _connection.Access == ClientAccess.Full;
         IsReadOnlyNoticeVisible = connected && !CanEdit;
+        Sync(() => AutoFailover = snapshot.AutoFailover);
+
+        FailoverActive = connected && snapshot.FailoverActive;
+        if (FailoverActive)
+        {
+            var preferred = snapshot.Adapters.Where(a => a.IsDemoted).OrderBy(a => a.PriorityIndex).FirstOrDefault();
+            var current = snapshot.Adapters.FirstOrDefault(a => a.IsPrimary);
+            var why = preferred?.Health == Leo.Core.Networking.HealthState.Captive ? "needs a sign-in" : "has no internet";
+            var back = preferred?.FailbackInSeconds is { } s ? $" LEO switches back about {s}s after it recovers." : " LEO switches back once it recovers.";
+            FailoverText = preferred is null || current is null
+                ? "LEO is routing around a network without internet."
+                : $"{preferred.DisplayName} {why}, so traffic is going through {current.DisplayName}.{back}";
+        }
 
         var candidates = snapshot.Adapters.Count(a => a.PriorityIndex is not null);
 
@@ -118,7 +178,8 @@ public sealed partial class NetworksViewModel : ObservableObject
         if (primary is not null)
         {
             PrimaryTitle = primary.DisplayName;
-            PrimaryDetail = primary.Network is { } n ? (n.Nickname ?? n.Name) : "";
+            var networkName = primary.Network is { } n ? (n.Nickname ?? n.Name) : "";
+            PrimaryDetail = string.Join("  ·  ", new[] { networkName, AdapterCardViewModel.HealthText(primary) }.Where(s => s.Length > 0));
             PrimaryGlyph = AdapterCardViewModel.GlyphFor(primary.Kind);
         }
         else

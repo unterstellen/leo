@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="Leo.App.Controls.WifiNetworksPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Leo.App.ViewModels">
+    <Grid RowSpacing="10" Width="520">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Text="Tick “Keep connected” and LEO keeps this adapter on that network: it reconnects when it drops and moves back if Windows switches it elsewhere. Passwords are stored by Windows, never by LEO." />
+            <Button Grid.Column="1" Command="{x:Bind ViewModel.RescanCommand}" VerticalAlignment="Top" AutomationProperties.Name="Rescan">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                    <TextBlock Text="Rescan" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <InfoBar Grid.Row="1" Severity="Error" IsClosable="False" Title="Wi-Fi"
+                 IsOpen="{x:Bind ViewModel.ErrorText, Mode=OneWay, Converter={StaticResource NotNullToBool}}"
+                 Message="{x:Bind ViewModel.ErrorText, Mode=OneWay}" />
+
+        <ScrollViewer Grid.Row="2" MaxHeight="380">
+            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Networks}">
+                <ItemsRepeater.Layout>
+                    <StackLayout Spacing="6" />
+                </ItemsRepeater.Layout>
+                <ItemsRepeater.ItemTemplate>
+                    <DataTemplate x:DataType="vm:WifiRowViewModel">
+                        <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}" CornerRadius="6" Padding="12,8">
+                            <Grid ColumnSpacing="12" RowSpacing="6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <StackPanel VerticalAlignment="Center" Width="40">
+                                    <FontIcon Glyph="&#xE701;" FontSize="18" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{x:Bind SignalText}" FontSize="11" HorizontalAlignment="Center"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{x:Bind Ssid}" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind Details}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <!-- OneWay + Click: pins change only on a real user click, never because a binding
+                                     pushed a value while the dialog was being torn down. -->
+                                <CheckBox Grid.Column="2" Content="Keep connected" MinWidth="0" VerticalAlignment="Center"
+                                          IsChecked="{x:Bind IsPinned, Mode=OneWay}" IsEnabled="{x:Bind CanEdit}"
+                                          Click="KeepConnected_Click" Tag="{x:Bind}" AutomationProperties.Name="{x:Bind PinAutomationName}" />
+                                <Grid Grid.Column="3" VerticalAlignment="Center">
+                                    <Button Content="{x:Bind ConnectLabel, Mode=OneWay}" Click="Connect_Click" Tag="{x:Bind}"
+                                            Visibility="{x:Bind CanConnect}" Style="{StaticResource AccentButtonStyle}"
+                                            AutomationProperties.Name="{x:Bind ConnectAutomationName, Mode=OneWay}" />
+                                    <Button Content="Disconnect" Click="Disconnect_Click" Tag="{x:Bind}" Visibility="{x:Bind CanDisconnect}" AutomationProperties.Name="{x:Bind DisconnectAutomationName}" />
+                                </Grid>
+
+                                <PasswordBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" PlaceholderText="Wi-Fi password"
+                                             Password="{x:Bind Password, Mode=TwoWay}"
+                                             Visibility="{x:Bind ShowPassword, Mode=OneWay}"
+                                             AutomationProperties.Name="{x:Bind PasswordAutomationName}" />
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8">
+            <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="16" Height="16" />
+            <TextBlock Text="{x:Bind ViewModel.StatusText, Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       VerticalAlignment="Center" TextWrapping="Wrap" />
+        </StackPanel>
+    </Grid>
+</UserControl>

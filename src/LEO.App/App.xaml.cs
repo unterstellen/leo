@@ -33,6 +33,12 @@ public partial class App : Application
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         ViewModel = new MainViewModel(Connection, _dispatcher);
         Networks = new NetworksViewModel(Connection, _dispatcher);
+
+        Toasts.Register(() => _dispatcher.TryEnqueue(ShowMainWindow));
+        Connection.Notified += (_, n) =>
+        {
+            if (ViewModel.ShowNotifications) Toasts.Show(n);
+        };
         Connection.Start();
 
         CreateTrayIcon();
@@ -70,6 +76,7 @@ public partial class App : Application
     public async void ExitApp()
     {
         _exiting = true;
+        Toasts.Unregister();
         _trayIcon?.Dispose();
         _window?.Close();
         await Connection.DisposeAsync();
@@ -124,7 +131,9 @@ public partial class App : Application
             foreach (var adapter in candidates)
             {
                 var connected = adapter.Status == AdapterStatus.Up;
-                var network = adapter.Network is { } n ? (n.Nickname ?? n.Name) : "Not connected";
+                var network = adapter.Network is { } n
+                    ? $"{n.Nickname ?? n.Name} ({AdapterCardViewModel.HealthText(adapter)})"
+                    : "Not connected";
                 var item = new ToggleMenuFlyoutItem
                 {
                     Text = $"{adapter.DisplayName}  —  {network}",

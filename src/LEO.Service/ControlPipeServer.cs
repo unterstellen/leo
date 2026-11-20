@@ -8,7 +8,9 @@ using StreamJsonRpc;
 namespace Leo.Service;
 
 /// <summary>Accepts UI connections on \\.\pipe\LEO.Control and serves <see cref="ILeoControl"/> over JSON-RPC.</summary>
-public sealed class ControlPipeServer(EngineStatusProvider status, NetworkManager networks, ILoggerFactory loggers) : BackgroundService
+public sealed class ControlPipeServer(
+    EngineStatusProvider status, NetworkManager networks, ILoggerFactory loggers,
+    Leo.Service.Wifi.WifiManager? wifi = null, NotificationHub? hub = null) : BackgroundService
 {
     private readonly ILogger _log = loggers.CreateLogger<ControlPipeServer>();
 
@@ -65,7 +67,7 @@ public sealed class ControlPipeServer(EngineStatusProvider status, NetworkManage
 
         // TODO(M8): reject clients whose image is not Authenticode-signed by INFERSTELLEN/UNTERSTELLEN.
 
-        using var target = new LeoControlTarget(status, networks, client, loggers.CreateLogger<LeoControlTarget>());
+        using var target = new LeoControlTarget(status, networks, client, loggers.CreateLogger<LeoControlTarget>(), wifi, hub);
         using var rpc = PipeTransport.CreateRpc(pipe);
         // Surface protocol-level failures (they otherwise vanish inside StreamJsonRpc).
         rpc.TraceSource.Switch.Level = System.Diagnostics.SourceLevels.Warning;

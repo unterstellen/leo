@@ -16,6 +16,9 @@ public sealed class LeoConfig
 
     /// <summary>When true, LEO sets interface metrics to enforce <see cref="PriorityOrder"/>.</summary>
     public bool ManageMetrics { get; set; } = true;
+
+    /// <summary>Health probes and automatic failover (LEO.md §5.7).</summary>
+    public HealthSettings Health { get; set; } = new();
 }
 
 public sealed class AdapterSettings
@@ -23,10 +26,45 @@ public sealed class AdapterSettings
     public string Id { get; set; } = "";
     public string? Mac { get; set; }
     public string? Nickname { get; set; }
+
+    /// <summary>Wi-Fi only: SSIDs this adapter should stay on, most preferred first (LEO.md §5.5).</summary>
+    public List<string> PinnedSsids { get; set; } = [];
+
+    /// <summary>
+    /// Wi-Fi primary with a secondary station (DBS cards): desired "dual link" (Windows synchronized dual-station
+    /// mode). null = leave Windows' setting alone. LEO re-applies it if Windows resets it.
+    /// </summary>
+    public bool? DualLink { get; set; }
 }
 
 public sealed class NetworkSettings
 {
     public string Key { get; set; } = "";
     public string? Nickname { get; set; }
+}
+
+public sealed class HealthSettings
+{
+    public bool AutoFailover { get; set; } = true;
+    public int ProbeIntervalSeconds { get; set; } = 5;
+    public int FailoverDelaySeconds { get; set; } = 6;
+    public int FailbackDelaySeconds { get; set; } = 30;
+
+    /// <summary>Above this round-trip, a working network is reported as Degraded ("slow").</summary>
+    public int SlowLatencyMs { get; set; } = 1000;
+
+    /// <summary>Probe targets in order; the first that answers decides. Expected = body text, or "204".</summary>
+    public List<ProbeTarget> ProbeTargets { get; set; } =
+    [
+        new() { Url = "http://www.msftconnecttest.com/connecttest.txt", Expect = "Microsoft Connect Test" },
+        new() { Url = "http://cp.cloudflare.com/generate_204", Expect = "204" },
+    ];
+}
+
+public sealed class ProbeTarget
+{
+    public string Url { get; set; } = "";
+
+    /// <summary>"204" = expect HTTP 204 No Content; anything else = expect HTTP 200 with exactly this body.</summary>
+    public string Expect { get; set; } = "204";
 }

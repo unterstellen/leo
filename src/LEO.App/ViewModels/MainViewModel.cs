@@ -39,6 +39,21 @@ public sealed partial class MainViewModel : ObservableObject
 
     [ObservableProperty] public partial bool StartAtLogin { get; set; }
 
+    /// <summary>Per-user preference (ui.json), read by App before showing a toast.</summary>
+    public UiSettings Ui { get; } = UiSettings.Load();
+
+    public bool ShowNotifications
+    {
+        get => Ui.ShowNotifications;
+        set
+        {
+            if (Ui.ShowNotifications == value) return;
+            Ui.ShowNotifications = value;
+            Ui.Save();
+            OnPropertyChanged();
+        }
+    }
+
     private bool _loading;
 
     partial void OnStartAtLoginChanged(bool value)

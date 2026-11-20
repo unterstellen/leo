@@ -32,8 +32,40 @@ public interface ILeoControl
     /// <summary>Set or clear (null/empty) a network nickname, by <see cref="NetworkInfo.Key"/>. Full access.</summary>
     Task SetNetworkNicknameAsync(string networkKey, string? nickname, CancellationToken cancellationToken = default);
 
-    /// <summary>Raised whenever adapters, networks, priority or nicknames change.</summary>
+    /// <summary>Raised whenever adapters, networks, priority, health or nicknames change.</summary>
     event EventHandler<NetworkSnapshot>? NetworksChanged;
+
+    // ── Health & failover (M2) ────────────────────────────────────────────────
+
+    /// <summary>Turn automatic failover on/off (probes keep running either way). Full access.</summary>
+    Task SetAutoFailoverAsync(bool enabled, CancellationToken cancellationToken = default);
+
+    /// <summary>Failover, failback, new adapters… for the tray app to show as Windows notifications.</summary>
+    event EventHandler<LeoNotification>? NotificationRaised;
+
+    // ── Wi-Fi (M2) ────────────────────────────────────────────────────────────
+
+    /// <summary>Networks visible to a Wi-Fi adapter, plus its pinned ones. <paramref name="rescan"/> triggers a fresh scan.</summary>
+    Task<IReadOnlyList<WifiNetworkInfo>> GetWifiNetworksAsync(string adapterId, bool rescan, CancellationToken cancellationToken = default);
+
+    /// <summary>SSIDs this adapter should stay on, most preferred first (empty = no pinning). Full access.</summary>
+    Task SetWifiPinsAsync(string adapterId, IReadOnlyList<string> ssids, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Connect a Wi-Fi adapter to an SSID now. Uses its saved profile, copies one from another adapter, or —
+    /// with <paramref name="password"/> — creates one (stored by Windows, never by LEO). Fails with
+    /// <see cref="LeoErrorCodes.PasswordRequired"/> when a password is needed. Full access.
+    /// </summary>
+    Task ConnectWifiAsync(string adapterId, string ssid, string? password, CancellationToken cancellationToken = default);
+
+    /// <summary>Disconnect a Wi-Fi adapter (pins are kept; clear them first to stop LEO reconnecting). Full access.</summary>
+    Task DisconnectWifiAsync(string adapterId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Dual link on a Wi-Fi primary that has a secondary station (DBS cards): its secondary ("WiFi 2") joins the
+    /// same network on the other band, giving a second independent link. Remembered and re-applied. Full access.
+    /// </summary>
+    Task SetDualLinkAsync(string adapterId, bool enabled, CancellationToken cancellationToken = default);
 }
 
 public sealed record HelloRequest(int ProtocolVersion, string ClientName, string ClientVersion);

@@ -3,6 +3,7 @@ using Leo.Core.Config;
 using Leo.Service;
 using Leo.Service.Logging;
 using Leo.Service.Networking;
+using Leo.Service.Wifi;
 
 // Verbs: (none)              run — as a service under the SCM, or as a console app when started interactively
 //        install [--start]   register the Windows service (admin required)
@@ -21,11 +22,20 @@ builder.Logging.AddLeoFileLogger(LeoPaths.MachineLogs, "service");
 
 builder.Services.AddSingleton(new ConfigStore(LeoPaths.ConfigFile));
 builder.Services.AddSingleton<EngineStatusProvider>();
+builder.Services.AddSingleton<NotificationHub>();
 builder.Services.AddSingleton<NetworkInventory>();
 builder.Services.AddSingleton<NetworkManager>();
+builder.Services.AddSingleton<WifiManager>();
 
 builder.Services.AddHostedService<EngineHeartbeat>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NetworkManager>());
+builder.Services.AddHostedService(sp =>
+{
+    var wifi = sp.GetRequiredService<WifiManager>();
+    var networks = sp.GetRequiredService<NetworkManager>();
+    wifi.ConnectionChanged += (_, _) => networks.RequestRescan();
+    return wifi;
+});
 builder.Services.AddHostedService<ControlPipeServer>();
 
 builder.Build().Run();

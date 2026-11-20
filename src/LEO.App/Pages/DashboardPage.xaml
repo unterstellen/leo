@@ -23,6 +23,9 @@
                 </Grid>
             </Border>
 
+            <InfoBar IsOpen="{x:Bind Networks.FailoverActive, Mode=OneWay}" IsClosable="False" Severity="Warning"
+                     Title="Failover active" Message="{x:Bind Networks.FailoverText, Mode=OneWay}" />
+
             <!-- Primary network -->
             <Border Style="{StaticResource LeoCardStyle}">
                 <Grid ColumnSpacing="16">

@@ -4,6 +4,8 @@ using StreamJsonRpc;
 
 namespace Leo.App.Services;
 
+public sealed record RpcError(string Message, int? Code);
+
 public enum ConnectionState
 {
     Connecting,
@@ -40,13 +42,19 @@ public sealed class ServiceConnection : IAsyncDisposable
         return RunAsync(_cts.Token);
     });
 
+    /// <summary>A service-side notification (failover, new adapter…) to show to the user.</summary>
+    public event EventHandler<LeoNotification>? Notified;
+
     /// <summary>
     /// Runs a command against the service. Returns null on success, or a user-facing error message.
     /// </summary>
-    public async Task<string?> TryInvokeAsync(Func<ILeoControl, Task> call)
+    public async Task<string?> TryInvokeAsync(Func<ILeoControl, Task> call) => (await InvokeAsync(call))?.Message;
+
+    /// <summary>Like <see cref="TryInvokeAsync"/> but keeps the JSON-RPC error code (e.g. PasswordRequired).</summary>
+    public async Task<RpcError?> InvokeAsync(Func<ILeoControl, Task> call)
     {
         var control = Control;
-        if (control is null) return "The LEO service isn't connected.";
+        if (control is null) return new RpcError("The LEO service isn't connected.", null);
         try
         {
             await call(control);
@@ -54,12 +62,20 @@ public sealed class ServiceConnection : IAsyncDisposable
         }
         catch (RemoteInvocationException ex)
         {
-            return ex.Message;
+            return new RpcError(ex.Message, ex.ErrorCode);
         }
         catch (Exception ex) when (ex is ConnectionLostException or ObjectDisposedException)
         {
-            return "Lost connection to the LEO service.";
+            return new RpcError("Lost connection to the LEO service.", null);
         }
+    }
+
+    /// <summary>Calls a query on the service; returns default (and the error) on failure.</summary>
+    public async Task<(T? Result, RpcError? Error)> QueryAsync<T>(Func<ILeoControl, Task<T>> call)
+    {
+        T? result = default;
+        var error = await InvokeAsync(async c => result = await call(c));
+        return (result, error);
     }
 
     private async Task RunAsync(CancellationToken ct)
@@ -85,6 +101,7 @@ public sealed class ServiceConnection : IAsyncDisposable
 
                 control.StatusChanged += (_, s) => SetState(ConnectionState.Connected, s, control);
                 control.NetworksChanged += (_, n) => SetNetworks(n);
+                control.NotificationRaised += (_, n) => Notified?.Invoke(this, n);
 
                 SetState(ConnectionState.Connected, await control.GetStatusAsync(ct), control);
                 SetNetworks(await control.GetNetworksAsync(ct));

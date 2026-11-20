@@ -11,4 +11,6 @@ public sealed partial class SettingsPage : Page
     }
 
     public MainViewModel ViewModel => App.Current.ViewModel;
+
+    public NetworksViewModel Networks => App.Current.Networks;
 }

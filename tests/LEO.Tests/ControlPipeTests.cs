@@ -70,7 +70,8 @@ public sealed class ControlPipeTests
         var networks = new Leo.Service.Networking.NetworkManager(
             new Leo.Service.Networking.NetworkInventory(NullLogger<Leo.Service.Networking.NetworkInventory>.Instance),
             new Leo.Core.Config.ConfigStore(configPath),
-            NullLogger<Leo.Service.Networking.NetworkManager>.Instance);
+            new NotificationHub(NullLogger<NotificationHub>.Instance),
+            NullLogger<Leo.Service.Networking.NetworkManager>.Instance) { ProbesEnabled = false };
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         // Run it like the service does (scans + raises Changed). Non-admin: metric writes just fail.
         var firstSnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

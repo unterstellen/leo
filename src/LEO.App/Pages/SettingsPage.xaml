@@ -24,6 +24,38 @@
             </Border>
 
             <Border Style="{StaticResource LeoCardStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Automatic failover" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                   Text="LEO checks every network for real internet every few seconds. When your top network loses internet, traffic moves to the next healthy one, and comes back after it has been fine for 30 seconds." />
+                    </StackPanel>
+                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" OnContent="On" OffContent="Off"
+                                  IsOn="{x:Bind Networks.AutoFailover, Mode=TwoWay}" IsEnabled="{x:Bind Networks.CanEdit, Mode=OneWay}" />
+                </Grid>
+            </Border>
+
+            <Border Style="{StaticResource LeoCardStyle}">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Show notifications" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                   Text="Failover and switch-back, new network adapters, sign-in pages and Wi-Fi reconnects. Shown while LEO is in the tray." />
+                    </StackPanel>
+                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" OnContent="On" OffContent="Off"
+                                  IsOn="{x:Bind ViewModel.ShowNotifications, Mode=TwoWay}" />
+                </Grid>
+            </Border>
+
+            <Border Style="{StaticResource LeoCardStyle}">
                 <StackPanel Spacing="4">
                     <TextBlock Text="About" Style="{StaticResource BodyStrongTextBlockStyle}" />
                     <TextBlock>
