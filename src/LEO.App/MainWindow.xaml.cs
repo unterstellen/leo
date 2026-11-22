@@ -79,8 +79,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
                 ContentFrame.Navigate(typeof(NetworksPage));
                 break;
             case "Apps":
-                ContentFrame.Navigate(typeof(ComingSoonPage), new ComingSoonInfo("Apps", "M3",
-                    "Choose which network each app or game uses."));
+                ContentFrame.Navigate(typeof(AppsPage));
                 break;
             case "Destinations":
                 ContentFrame.Navigate(typeof(ComingSoonPage), new ComingSoonInfo("URLs & IPs", "M4",

@@ -5,7 +5,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:vm="using:Leo.App.ViewModels"
     xmlns:controls="using:Leo.App.Controls">
-    <ScrollViewer>
+    <ScrollViewer Padding="32,24,32,24">
         <StackPanel Spacing="16" MaxWidth="960" HorizontalAlignment="Left">
             <StackPanel Spacing="4">
                 <TextBlock Text="Networks" Style="{StaticResource TitleTextBlockStyle}" />

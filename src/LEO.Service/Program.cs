@@ -26,6 +26,9 @@ builder.Services.AddSingleton<NotificationHub>();
 builder.Services.AddSingleton<NetworkInventory>();
 builder.Services.AddSingleton<NetworkManager>();
 builder.Services.AddSingleton<WifiManager>();
+builder.Services.AddSingleton<Leo.Service.SplitTunnel.MihomoEngine>();
+builder.Services.AddSingleton<Leo.Service.SplitTunnel.ChildProcessTracker>();
+builder.Services.AddSingleton<Leo.Service.SplitTunnel.SplitTunnelManager>();
 
 builder.Services.AddHostedService<EngineHeartbeat>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NetworkManager>());
@@ -36,6 +39,7 @@ builder.Services.AddHostedService(sp =>
     wifi.ConnectionChanged += (_, _) => networks.RequestRescan();
     return wifi;
 });
+builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.SplitTunnel.SplitTunnelManager>());
 builder.Services.AddHostedService<ControlPipeServer>();
 
 builder.Build().Run();

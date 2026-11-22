@@ -33,6 +33,13 @@
             PaneDisplayMode="Left"
             OpenPaneLength="220"
             SelectionChanged="Nav_SelectionChanged">
+            <NavigationView.Resources>
+                <!-- The page area is drawn by the Border below (inset on all sides) instead of the built-in layer,
+                     which runs into the window's right and bottom edges. -->
+                <SolidColorBrush x:Key="NavigationViewContentBackground" Color="Transparent" />
+                <SolidColorBrush x:Key="NavigationViewContentGridBorderBrush" Color="Transparent" />
+                <CornerRadius x:Key="NavigationViewContentGridCornerRadius">0</CornerRadius>
+            </NavigationView.Resources>
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Dashboard" Tag="Dashboard" IsSelected="True">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
@@ -52,7 +59,11 @@
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE8F1;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
-            <Frame x:Name="ContentFrame" Padding="32,24,32,24" />
+            <Border Margin="0,0,8,8" CornerRadius="8" BorderThickness="1"
+                    Background="{ThemeResource LayerFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                <Frame x:Name="ContentFrame" />
+            </Border>
         </NavigationView>
     </Grid>
 </Window>

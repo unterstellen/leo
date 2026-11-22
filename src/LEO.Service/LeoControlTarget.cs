@@ -17,19 +17,41 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
     private readonly ClientIdentity _client;
     private readonly ILogger _log;
 
+    private readonly Leo.Service.SplitTunnel.SplitTunnelManager? _split;
+
     public LeoControlTarget(EngineStatusProvider status, NetworkManager? networks, ClientIdentity client, ILogger log,
-        WifiManager? wifi = null, NotificationHub? hub = null)
+        WifiManager? wifi = null, NotificationHub? hub = null, Leo.Service.SplitTunnel.SplitTunnelManager? splitTunnel = null)
     {
         _status = status;
         _networks = networks;
         _wifi = wifi;
         _hub = hub;
+        _split = splitTunnel;
         _client = client;
         _log = log;
         _status.Changed += OnStatusChanged;
         if (_networks is not null) _networks.Changed += OnNetworksChanged;
         if (_hub is not null) _hub.Raised += OnNotification;
+        if (_split is not null) _split.Changed += OnSplitTunnelChanged;
     }
+
+    public event EventHandler<SplitTunnelInfo>? SplitTunnelChanged;
+
+    private void OnSplitTunnelChanged(object? sender, SplitTunnelInfo e) => SplitTunnelChanged?.Invoke(this, e);
+
+    private Leo.Service.SplitTunnel.SplitTunnelManager Split =>
+        _split ?? throw new LocalRpcException("Split tunneling is not available.") { ErrorCode = LeoErrorCodes.InvalidOperation };
+
+    public Task<SplitTunnelInfo> GetSplitTunnelAsync(CancellationToken cancellationToken = default) => Task.FromResult(Split.Info);
+
+    public Task SetSplitTunnelEnabledAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SetSplitTunnelEnabledAsync), () => Split.SetEnabledAsync(enabled, cancellationToken));
+
+    public Task SaveAppRuleAsync(Leo.Core.SplitTunnel.AppRule rule, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SaveAppRuleAsync), () => Split.SaveRuleAsync(rule, cancellationToken));
+
+    public Task DeleteAppRuleAsync(string ruleId, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(DeleteAppRuleAsync), () => Split.DeleteRuleAsync(ruleId, cancellationToken));
 
     public event EventHandler<EngineStatus>? StatusChanged;
 
@@ -196,5 +218,6 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
         _status.Changed -= OnStatusChanged;
         if (_networks is not null) _networks.Changed -= OnNetworksChanged;
         if (_hub is not null) _hub.Raised -= OnNotification;
+        if (_split is not null) _split.Changed -= OnSplitTunnelChanged;
     }
 }
