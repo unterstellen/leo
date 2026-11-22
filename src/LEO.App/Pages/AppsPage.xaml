@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Leo.App.Pages.AppsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Leo.App.ViewModels"
+    xmlns:controls="using:Leo.App.Controls">
+    <ScrollViewer>
+        <StackPanel Spacing="16" MaxWidth="960" HorizontalAlignment="Left">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Apps" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                           Text="Choose which network each app uses. Apps without a rule use your Primary network. Local network traffic (printers, your router) is never affected." />
+            </StackPanel>
+
+            <InfoBar IsOpen="True" IsClosable="False" Severity="{x:Bind ViewModel.StatusSeverity, Mode=OneWay}"
+                     Title="{x:Bind ViewModel.StatusTitle, Mode=OneWay}" Message="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+            <InfoBar x:Name="ErrorBar" IsOpen="False" Severity="Error" Title="Couldn't apply that"
+                     Message="{x:Bind ViewModel.ErrorText, Mode=OneWay}" Closed="ErrorBar_Closed" />
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <DropDownButton IsEnabled="{x:Bind ViewModel.CanEdit, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}" AutomationProperties.Name="Add app">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE710;" FontSize="14" />
+                        <TextBlock Text="Add app" />
+                    </StackPanel>
+                    <DropDownButton.Flyout>
+                        <MenuFlyout Placement="BottomEdgeAlignedLeft">
+                            <MenuFlyoutItem Text="Running apps…" Click="AddRunning_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE9D9;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Text="Installed apps…" Click="AddInstalled_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE71D;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Text="Browse for a program…" Click="AddBrowse_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8E5;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem Text="Everything in a folder…" Click="AddFolder_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8B7;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                            <MenuFlyoutItem Text="Programs by name…" Click="AddName_Click">
+                                <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8C1;" /></MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
+                        </MenuFlyout>
+                    </DropDownButton.Flyout>
+                </DropDownButton>
+                <Button Content="{x:Bind ViewModel.MasterButtonText, Mode=OneWay}" Click="Master_Click"
+                        IsEnabled="{x:Bind ViewModel.CanEdit, Mode=OneWay}"
+                        AutomationProperties.Name="{x:Bind ViewModel.MasterButtonText, Mode=OneWay}" />
+            </StackPanel>
+
+            <TextBlock Text="No apps yet. Use “Add app” to send an app through a network of your choice."
+                       Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Rules}">
+                <ItemsRepeater.Layout>
+                    <StackLayout Spacing="8" />
+                </ItemsRepeater.Layout>
+                <ItemsRepeater.ItemTemplate>
+                    <DataTemplate x:DataType="vm:AppRuleCardViewModel">
+                        <Border Style="{StaticResource LeoCardStyle}" Padding="16">
+                            <Grid ColumnSpacing="16" RowSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <Grid Width="40" Height="40" VerticalAlignment="Top" Margin="0,2,0,0">
+                                    <FontIcon Glyph="&#xE7FC;" FontSize="26" Visibility="{x:Bind NoIcon, Mode=OneWay}" />
+                                    <Image Source="{x:Bind Icon, Mode=OneWay}" Width="32" Height="32" />
+                                </Grid>
+
+                                <StackPanel Grid.Column="1" Spacing="2">
+                                    <TextBlock Text="{x:Bind Name, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind PatternText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind RouteText, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind ChildrenText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+
+                                <controls:WrapPanel Grid.Row="1" Grid.Column="1" HorizontalSpacing="6" VerticalSpacing="6">
+                                    <Button Click="Target_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
+                                            AutomationProperties.Name="{x:Bind TargetText, Mode=OneWay}">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE968;" FontSize="14" />
+                                            <TextBlock Text="{x:Bind TargetText, Mode=OneWay}" />
+                                            <FontIcon Glyph="&#xE70D;" FontSize="10" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Click="Down_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
+                                            AutomationProperties.Name="{x:Bind DownText, Mode=OneWay}">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{x:Bind DownText, Mode=OneWay}" />
+                                            <FontIcon Glyph="&#xE70D;" FontSize="10" />
+                                        </StackPanel>
+                                    </Button>
+                                    <CheckBox Content="Include programs it starts" MinWidth="0" IsChecked="{x:Bind IncludeChildren, Mode=OneWay}"
+                                              Click="Children_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}" />
+                                    <CheckBox Content="Active" MinWidth="0" IsChecked="{x:Bind IsEnabled, Mode=OneWay}"
+                                              Click="Enabled_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}" />
+                                    <Button Click="Delete_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}" AutomationProperties.Name="Remove rule">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE74D;" FontSize="14" />
+                                            <TextBlock Text="Remove" />
+                                        </StackPanel>
+                                    </Button>
+                                </controls:WrapPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

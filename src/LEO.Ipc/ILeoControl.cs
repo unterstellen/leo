@@ -67,6 +67,23 @@ public interface ILeoControl
     /// <summary>Disconnect a Wi-Fi adapter (pins are kept; clear them first to stop LEO reconnecting). Full access.</summary>
     Task DisconnectWifiAsync(string adapterId, CancellationToken cancellationToken = default);
 
+    // ── Split tunneling: apps (M3) ────────────────────────────────────────────
+
+    /// <summary>Engine state and app rules with their current route.</summary>
+    Task<SplitTunnelInfo> GetSplitTunnelAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Master switch for split tunneling (rules are kept). Full access.</summary>
+    Task SetSplitTunnelEnabledAsync(bool enabled, CancellationToken cancellationToken = default);
+
+    /// <summary>Adds a rule, or replaces the one with the same Id. Validated by the service. Full access.</summary>
+    Task SaveAppRuleAsync(Leo.Core.SplitTunnel.AppRule rule, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a rule. Full access.</summary>
+    Task DeleteAppRuleAsync(string ruleId, CancellationToken cancellationToken = default);
+
+    /// <summary>Raised when the engine state, rules or their routes change.</summary>
+    event EventHandler<SplitTunnelInfo>? SplitTunnelChanged;
+
     /// <summary>
     /// Dual link on a Wi-Fi primary that has a secondary station (DBS cards): its secondary ("WiFi 2") joins the
     /// same network on the other band, giving a second independent link. Remembered and re-applied. Full access.

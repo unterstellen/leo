@@ -37,6 +37,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 
 if (-not $isAdmin) {
     if ($Action -eq 'deploy') {
+        & (Join-Path $PSScriptRoot 'get-engine.ps1') # pinned + hash-checked; no-op when present
         # Build as the normal user so bin\ and obj\ stay user-owned.
         dotnet build (Join-Path $root 'src\LEO.Service\LEO.Service.csproj') -c $Configuration -nologo -v q
         if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
@@ -61,6 +62,15 @@ try {
             New-Item -ItemType Directory -Force $installDir | Out-Null
             robocopy $buildDir $installDir /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
             if ($LASTEXITCODE -ge 8) { throw "Copy failed (robocopy $LASTEXITCODE)" }
+            # Split-tunneling engine (fetched by tools\get-engine.ps1) next to the service.
+            $engine = Join-Path $root 'artifacts\engine\mihomo.exe'
+            if (Test-Path $engine) {
+                New-Item -ItemType Directory -Force (Join-Path $installDir 'engine') | Out-Null
+                Copy-Item $engine (Join-Path $installDir 'engine\mihomo.exe') -Force
+            }
+            else {
+                Write-Warning "No engine at $engine - run tools\get-engine.ps1 first, or app rules can't be applied."
+            }
             & $exe install --start
             if ($LASTEXITCODE -ne 0) { throw "Service install failed ($LASTEXITCODE)" }
             Write-Host "Deployed to $installDir"

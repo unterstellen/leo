@@ -39,12 +39,17 @@ public partial class App : Application
     public ServiceConnection Connection { get; } = new();
     public MainViewModel ViewModel { get; private set; } = null!;
     public NetworksViewModel Networks { get; private set; } = null!;
+    public AppsViewModel Apps { get; private set; } = null!;
+
+    /// <summary>Main window handle, for Windows file/folder pickers.</summary>
+    public IntPtr MainWindowHandle => _window is null ? IntPtr.Zero : WinRT.Interop.WindowNative.GetWindowHandle(_window);
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         _dispatcher = DispatcherQueue.GetForCurrentThread();
         ViewModel = new MainViewModel(Connection, _dispatcher);
         Networks = new NetworksViewModel(Connection, _dispatcher);
+        Apps = new AppsViewModel(Connection, _dispatcher);
 
         Toasts.Register(() => _dispatcher.TryEnqueue(ShowMainWindow));
         Connection.Notified += (_, n) =>

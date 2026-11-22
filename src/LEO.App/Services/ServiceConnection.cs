@@ -45,6 +45,17 @@ public sealed class ServiceConnection : IAsyncDisposable
     /// <summary>A service-side notification (failover, new adapter…) to show to the user.</summary>
     public event EventHandler<LeoNotification>? Notified;
 
+    public SplitTunnelInfo SplitTunnel { get; private set; } = SplitTunnelInfo.Empty;
+
+    /// <summary>Split-tunnel state or app rules changed.</summary>
+    public event EventHandler? SplitTunnelChanged;
+
+    private void SetSplitTunnel(SplitTunnelInfo info)
+    {
+        SplitTunnel = info;
+        SplitTunnelChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>
     /// Runs a command against the service. Returns null on success, or a user-facing error message.
     /// </summary>
@@ -102,9 +113,11 @@ public sealed class ServiceConnection : IAsyncDisposable
                 control.StatusChanged += (_, s) => SetState(ConnectionState.Connected, s, control);
                 control.NetworksChanged += (_, n) => SetNetworks(n);
                 control.NotificationRaised += (_, n) => Notified?.Invoke(this, n);
+                control.SplitTunnelChanged += (_, s) => SetSplitTunnel(s);
 
                 SetState(ConnectionState.Connected, await control.GetStatusAsync(ct), control);
                 SetNetworks(await control.GetNetworksAsync(ct));
+                SetSplitTunnel(await control.GetSplitTunnelAsync(ct));
 
                 await rpc.Completion.WaitAsync(ct);
             }
@@ -122,6 +135,7 @@ public sealed class ServiceConnection : IAsyncDisposable
             Access = ClientAccess.ReadOnly;
             SetState(ConnectionState.ServiceUnavailable, null, null);
             SetNetworks(NetworkSnapshot.Empty);
+            SetSplitTunnel(SplitTunnelInfo.Empty);
             try { await Task.Delay(RetryDelay, ct); } catch (OperationCanceledException) { break; }
         }
     }
