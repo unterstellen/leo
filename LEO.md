@@ -371,6 +371,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 **M2 closed (2026-11-20).**
 - **Robustness fixes from live testing:** the UI logs unhandled exceptions instead of vanishing; one dialog at a time; an idle secondary's radio error no longer breaks the Wi-Fi list ("Wi-Fi is turned off" shown when it is); "No network available" waits 10 s so a quick takeover doesn't trigger it; the pin check stays quiet while Wi-Fi is off; notifications name adapters "WiFi", not the driver description.
 - **Card layout:** actions sit in their own row under the name and details (in a small custom `WrapPanel`, wrapping onto more lines in narrow windows), so details use the full card width and buttons never get clipped. Wi-Fi networks and Rename have text labels.
+- **Page area:** a rounded panel inset from the window edges on all sides (LEO draws it instead of NavigationView's built-in layer, which runs into the right and bottom edges); page padding sits inside each page's scroll area, so the scrollbar hugs the panel's right edge.
 - Probes: an adapter whose IP is changing (network switch, DHCP) is now reported **Unknown** instead of NoInternet, so a network switch can't cause a false failover.
 - **Not yet exercised live: an actual failover/failback** (the phone tether is a second internet path), **and a toast on screen.**
 
