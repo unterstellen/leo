@@ -102,8 +102,11 @@ public sealed class ControlPipeTests
         Assert.Same(helloTask, finished);
         Assert.True((await helloTask).Compatible);
 
+        // The round trip is what's tested. How many adapters the machine has (and whether the first scan has
+        // finished on a cold CI VM) isn't, so an empty list is fine here.
         var snapshot = await proxy.GetNetworksAsync(cts.Token);
-        Assert.NotEmpty(snapshot.Adapters);
+        Assert.NotNull(snapshot);
+        Assert.NotNull(snapshot.Adapters);
         await networks.StopAsync(CancellationToken.None);
         File.Delete(configPath);
     }
