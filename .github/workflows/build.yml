@@ -1,0 +1,54 @@
+# Builds LEO and runs the tests on GitHub-hosted Windows runners for every push and pull request.
+# Live tests (real service, real probes, real Wi-Fi) are opt-in via LEO_LIVE_TESTS and are NOT run here.
+name: Build
+
+on:
+  push:
+    branches: [canary, main, preview]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & test (Windows x64)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up .NET (version from global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore LEO.slnx
+
+      - name: Build (Release)
+        run: dotnet build LEO.slnx -c Release --no-restore
+
+      # Test through the solution so the x64 platform mapping (bin/x64/Release) matches the build step.
+      - name: Test
+        run: >
+          dotnet test LEO.slnx -c Release --no-build
+          --logger "trx;LogFileName=results.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/*.trx
+          if-no-files-found: ignore
