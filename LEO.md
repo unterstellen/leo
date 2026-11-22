@@ -5,7 +5,7 @@
 | **App name** | LEO |
 | **Publisher (brand)** | UNTERSTELLEN — unterstellen.org |
 | **Company** | INFERSTELLEN — inferstellen.com |
-| **Code signing** | **SignPath Foundation** (free signing for open-source projects), done in GitHub Actions. Windows shows the publisher as "SignPath Foundation" |
+| **Code signing** | **Not decided yet** (choose at M8; SignPath ruled out 2026-11-22). Options in §16.1 |
 | **Repository** | https://github.com/unterstellen/leo-windows (public) |
 | **Releases / updates** | https://github.com/unterstellen/leo-windows/releases |
 | **Platform** | Windows 11, x64 only |
@@ -37,7 +37,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 | Architecture | **Windows Service (LocalSystem)** plus a separate **non-elevated tray/desktop UI**, connected by a secured named pipe |
 | Split-tunnel tech | **Wintun TUN adapter** plus a user-mode packet engine (no custom kernel driver) |
 | Stack | **C# / .NET 8+**, **WinUI 3** UI. Packet hot path in a native **Rust** core (see §5.3) |
-| Code signing | **SignPath Foundation** (free for OSS; decided 2026-11-20, replacing a bought INFERSTELLEN certificate). Release builds are made and signed in GitHub Actions, never on a dev PC. Every binary and the installer are signed |
+| Code signing | **Not decided yet**: choose at M8 from §16.1 (SignPath Foundation ruled out 2026-11-22). Release builds are signed in CI, never on a dev PC. Every binary and the installer get signed |
 | Branding | No custom brand colors: follow Windows 11 (system accent, light/dark). **Logo**: a yellow circle face wearing dark glasses, with no eyes, nose or mouth (`assets/leo.svg`) |
 | Language | English only, permanently. No localization layer |
 | Failover | **Auto-failover by priority**, based on real internet health checks. Switches back when the network recovers |
@@ -263,7 +263,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 ## 9. Distribution
 - **MSI** built with the WiX Toolset. MSIX isn't used because it can't install the Wintun driver adapter or a LocalSystem service cleanly.
 - Installer: installs the service, Wintun, the UI and Start menu shortcuts, with the option "Start LEO at login".
-- Everything signed through **SignPath Foundation** (Authenticode + timestamp) in the GitHub Actions release workflow. Signed builds only come from CI; local dev builds stay unsigned (Smart App Control off on the dev PC).
+- Everything Authenticode-signed (with timestamp) using the certificate chosen at M8 (§16.1), in the GitHub Actions release workflow. Local dev builds stay unsigned (Smart App Control off on the dev PC).
 - **Hosting: GitHub Releases** at https://github.com/unterstellen/leo-windows/releases (public repo). Each release has the signed `LEO-<version>-x64.msi` attached. Tags look like `v0.2.0`.
 - **Auto-update**: the service calls `GET https://api.github.com/repos/unterstellen/leo-windows/releases/latest` (anonymous; GitHub allows 60 requests/hour per IP, so it checks at most every 6 h), compares the tag (`v0.2.0`) with its own version, downloads the MSI asset, **verifies the MSI has a valid Authenticode signature from the same certificate as the installed LEO**, then installs silently and restarts. The user can defer it. The Canary channel reads pre-releases instead of `latest`.
 - Channels: `canary` (git branch `canary`) → `main` (stable).
@@ -310,7 +310,7 @@ leo-windows/
 | **M5** | Profiles + Stats | Profiles with triggers; per-adapter/per-app stats; connections view |
 | **M6** | VPN coexistence | VPN as underlay + as target + bypass; kill-switch detection |
 | **M7** | Bonding | Bond groups, balancing modes, sticky sessions |
-| **M8** | Ship | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, SignPath signing in GitHub Actions, GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
+| **M8** | Ship | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
 | *Future idea* | Bond through your own PC | Not planned. Single-stream bonding via the user's own second PC, never a hosted server (§15) |
 
 ---
@@ -329,6 +329,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 ```
 
 - The service runs from Program Files (admin-only writable), never from `bin\`, so rebuilding never collides with the running service.
+- **CI:** `.github/workflows/build.yml` builds the solution (Release) and runs the tests on GitHub-hosted `windows-latest` for every push to canary/main/preview and every pull request. Tests run through `LEO.slnx` so the x64 platform mapping (`bin\x64\Release`) matches the build. Live tests stay opt-in (`LEO_LIVE_TESTS`) and never run in CI.
 - `LEO.Service.exe` with no arguments runs as a console app when started from a terminal. Logs: `%ProgramData%\UNTERSTELLEN\LEO\logs\` (service), `%LocalAppData%\UNTERSTELLEN\LEO\logs\` (UI connection errors).
 - Optional test switches: `LEO_LIVE_TESTS=1` runs read-only checks against the installed service; `LEO_DUMP=<file.dmp>` prints managed stacks and faulted tasks from a service dump (ClrMD, dev-only).
 
@@ -376,7 +377,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 ---
 
 ## 13. Resolved Questions (2026-11-20)
-1. **Signing**: ~~INFERSTELLEN certificate~~ → **SignPath Foundation** (2026-11-20). The publisher shown by Windows is "SignPath Foundation"; the pipe-client check (§4.2) and the update check (§9) compare against the release certificate rather than a fixed name.
+1. **Signing**: not decided (SignPath ruled out 2026-11-22; options in §16.1). Whatever certificate is used, the pipe-client check (§4.2) and the update check (§9) compare against the release certificate rather than a fixed name.
 2. **Branding**: follow Windows 11, with no custom colors. Logo = yellow face + dark glasses, no other features. Source `assets/leo.svg`, rendered by `tools/make-icon.ps1` into `src/LEO.App/Assets/leo.ico` (16–256 px; a simplified, bolder variant at ≤ 24 px for the tray). One icon works on both light and dark taskbars.
 3. **Update hosting**: GitHub Releases on the public repo https://github.com/unterstellen/leo-windows.
 4. **Health probe**: Microsoft NCSI + Cloudflare fallback, configurable (§5.7).
@@ -418,7 +419,7 @@ Goal: anyone on Windows 11 x64 downloads LEO from GitHub Releases, installs it w
 |---|---|---|
 | Install | WiX MSI: service in Program Files, Start menu entry, optional "start at login", one admin prompt | Dev script only |
 | Prerequisites | **Self-contained** builds: .NET runtime and Windows App SDK bundled, nothing to install first | App/service currently need .NET 10 installed |
-| Signing | **SignPath Foundation** signs MSI + all binaries in a GitHub Actions workflow. Unsigned builds are **blocked by Smart App Control** (on by default on many fresh Windows 11 PCs) and warned about by SmartScreen | Not set up. Apply to SignPath once the release workflow exists |
+| Signing | A trusted certificate signs MSI + all binaries in the release workflow (option chosen at M8, §16.1). Unsigned builds are **blocked by Smart App Control** (on by default on many fresh Windows 11 PCs) and warned about by SmartScreen | Not decided |
 | Updates | GitHub Releases + in-app updater (§9), signature-checked | Designed, not built |
 | Uninstall | Removes service, Wintun, metric overrides, DNS changes; restores Windows networking; keeps or asks about config | Partly (service stop restores metrics) |
 | Hardware coverage | Public **beta** on GitHub Releases (pre-release) before v1; test matrix: Intel / Realtek / MediaTek / Qualcomm Wi-Fi, USB Ethernet dongles, Android + **iPhone** USB tethering, Bluetooth PAN, docks; with common VPNs (WireGuard, OpenVPN, commercial), antivirus suites and Windows Firewall on | Tested on one PC (Qualcomm DBS Wi-Fi, Android tether, Tailscale) |
@@ -429,13 +430,15 @@ Goal: anyone on Windows 11 x64 downloads LEO from GitHub Releases, installs it w
 
 Platform scope (decided 2026-11-20): **Windows 11 only, x64 only for v1**; ARM64 after v1; no Windows 10.
 
-### 16.1 SignPath Foundation: steps and rules (read 2026-11-20 from signpath.org; their terms are marked "Draft")
-**Order matters: SignPath requires the project to be *already released*, so apply after the first unsigned beta.**
-1. Now: **MFA on GitHub** for every team member (also required on SignPath). Repo public + `LICENSE` (OSI-approved, no commercial dual-licensing) ✅.
-2. M8: release workflow on **GitHub-hosted runners** (self-hosted runners fail SignPath's checks) → upload the unsigned build as a workflow artifact.
-3. M8: README / download page describing LEO, with a section titled **"Code signing policy"** containing *"Free code signing provided by SignPath.io, certificate by SignPath Foundation"*, the team roles (authors, reviewers, approvers) and a privacy statement link (LEO: no telemetry, no accounts, no servers).
-4. Publish the first **unsigned beta** on GitHub Releases, then **apply at signpath.org/apply** (acceptance is discretionary).
-5. After acceptance: SignPath project + "GitHub.com" trusted build system + artifact configuration (product name must equal the project name, "LEO") + signing policy + API token → repo secret `SIGNPATH_API_TOKEN` → workflow step `signpath/github-action-submit-signing-request@v3`.
-6. **Every release needs a manual approval in SignPath** before it's signed.
+### 16.1 Code signing options (decide at M8)
+Windows trusts any **valid signature from a recognised certificate authority**; per Microsoft, Smart App Control lets validly signed apps run. **SignPath Foundation is ruled out** (decided 2026-11-22: its requirements, e.g. the project being findable by name, don't fit).
 
-Rules that shape LEO: the installer must **announce system changes** (service; from M3 a virtual network adapter); a real **uninstaller** is mandatory; **sign only our own binaries**: Wintun ships with its upstream signature and is never re-signed or rebuilt, and Microsoft runtime files stay as Microsoft signed them; no proprietary code in the project.
+| Option | Cost | Publisher shown | Notes |
+|---|---|---|---|
+| **Certum Open Source Code Signing** | Low (tens of € per year; check at purchase) | The developer's name ("Open Source Developer, …") | Aimed at individual OSS developers, ID verification, no project-popularity rule. Cloud key (SimplySign) needs extra setup for CI. **Current favourite.** |
+| Azure Trusted Signing | ~$10/month | INFERSTELLEN (or the individual) | Easiest CI integration; eligibility for companies/individuals is strict and region-limited — check INFERSTELLEN. |
+| Classic OV certificate (Sectigo, DigiCert, …) | ~€100–400/year | INFERSTELLEN | Standard; hardware token or cloud HSM. |
+| Microsoft Store | Free | Microsoft | Poor fit: MSIX can't install drivers (Wintun) and services need a restricted capability; a Win32 installer in the Store still needs our own certificate. |
+| Unsigned | Free | — | SmartScreen warning, and **Smart App Control blocks it outright**: not acceptable for "everyone". |
+
+Rules regardless of option: release builds are made and signed in GitHub Actions (never on a dev PC); only LEO's own binaries are signed (Wintun and Microsoft runtime files keep their upstream signatures); the installer announces system changes (service; from M3 a virtual network adapter) and a real uninstaller exists.
