@@ -19,6 +19,9 @@ public sealed class LeoConfig
 
     /// <summary>Health probes and automatic failover (LEO.md §5.7).</summary>
     public HealthSettings Health { get; set; } = new();
+
+    /// <summary>Split tunneling: which app uses which network (LEO.md §6.4, M3).</summary>
+    public Leo.Core.SplitTunnel.SplitTunnelSettings SplitTunnel { get; set; } = new();
 }
 
 public sealed class AdapterSettings

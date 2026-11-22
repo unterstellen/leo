@@ -16,6 +16,7 @@ public static class AdapterClassifier
         "Hyper-V", "vEthernet", "vSwitch", "VMware", "VirtualBox", "Host-Only", "WAN Miniport",
         "Kernel Debug", "Teredo", "6to4", "IP-HTTPS", "ISATAP", "Loopback", "Wi-Fi Direct Virtual",
         "Microsoft Wi-Fi Direct", "Npcap", "Hamachi Loopback",
+        "Meta Tunnel", // LEO's own engine adapter (mihomo/Wintun) — never shown or managed
     ];
 
     private static readonly string[] TetherMarkers =

@@ -305,7 +305,7 @@ leo-windows/
 | **M0** | Scaffolding | Solution builds; service installs/uninstalls; UI connects over the pipe; tray icon shows |
 | **M1** | Inventory + Primary + Nicknames | All adapters listed live; rename; one-click Primary via metrics; tray quick menu |
 | **M2** | Health + Failover + Wi-Fi mgmt | Per-interface probes; auto failover/failback; SSID pinning per adapter; toasts |
-| **M3** | TUN engine + App rules | Wintun up; all traffic goes through the engine; per-app routing works for TCP/UDP; safe restore if it crashes |
+| **M3** | TUN engine + App rules (**built**, §17) | Wintun up; all traffic goes through the engine; per-app routing works for TCP/UDP; safe restore if it crashes |
 | **M4** | Destination rules + DNS | Fake-IP DNS, SNI sniffing, domain/CIDR/port rules, per-network DNS, precedence, "test a rule" |
 | **M5** | Profiles + Stats | Profiles with triggers; per-adapter/per-app stats; connections view |
 | **M6** | VPN coexistence | VPN as underlay + as target + bypass; kill-switch detection |
@@ -317,7 +317,7 @@ leo-windows/
 
 ## 12a. Development
 
-**Requirements:** .NET SDK 10.0.404+ (pinned in `global.json`). No Visual Studio needed: Windows App SDK / WinUI 3 come in through NuGet. Rust is only needed from M3.
+**Requirements:** .NET SDK 10.0.404+ (pinned in `global.json`). No Visual Studio needed: Windows App SDK / WinUI 3 come in through NuGet. The split-tunneling engine for development comes from `tools\get-engine.ps1` (pinned mihomo release, SHA-256 checked; `-FromZip <file>` for an already-downloaded zip); `tools\dev-service.ps1 deploy` runs it and copies the engine next to the service.
 
 ```
 dotnet build LEO.slnx                      # build everything
@@ -371,6 +371,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 **M2 closed (2026-11-20).**
 - **Robustness fixes from live testing:** the UI logs unhandled exceptions instead of vanishing; one dialog at a time; an idle secondary's radio error no longer breaks the Wi-Fi list ("Wi-Fi is turned off" shown when it is); "No network available" waits 10 s so a quick takeover doesn't trigger it; the pin check stays quiet while Wi-Fi is off; notifications name adapters "WiFi", not the driver description.
 - **Card layout:** actions sit in their own row under the name and details (in a small custom `WrapPanel`, wrapping onto more lines in narrow windows), so details use the full card width and buttons never get clipped. Wi-Fi networks and Rename have text labels.
+- **Page area:** a rounded panel inset from the window edges on all sides (LEO draws it instead of NavigationView's built-in layer, which runs into the right and bottom edges); page padding sits inside each page's scroll area, so the scrollbar hugs the panel's right edge.
 - Probes: an adapter whose IP is changing (network switch, DHCP) is now reported **Unknown** instead of NoInternet, so a network switch can't cause a false failover.
 - **Not yet exercised live: an actual failover/failback** (the phone tether is a second internet path), **and a toast on screen.**
 
@@ -442,3 +443,30 @@ Windows trusts any **valid signature from a recognised certificate authority**; 
 | Unsigned | Free | — | SmartScreen warning, and **Smart App Control blocks it outright**: not acceptable for "everyone". |
 
 Rules regardless of option: release builds are made and signed in GitHub Actions (never on a dev PC); only LEO's own binaries are signed (Wintun and Microsoft runtime files keep their upstream signatures); the installer announces system changes (service; from M3 a virtual network adapter) and a real uninstaller exists.
+
+---
+
+## 17. M3 decisions and engine trial (2026-11-22)
+
+**Decisions:**
+- **Engine: embed mihomo** (GPL-3.0, github.com/MetaCubeX/mihomo) instead of writing our own. LEO.Service runs it as a child process, generates its config from LEO's rules, and controls it through its local API. It covers M3 (app rules), M4 (domain/IP rules, DNS) and most of M7 (load-balance groups). LEO stays the UI, the network brains (inventory, health, failover, Wi-Fi) and the rule model.
+- **New app rules fall back to Primary** by default when their network is down (per-rule option: Block).
+- **App rules cover child processes** by default (per-rule option to turn off).
+- **Releases build mihomo from source in CI** and sign it with LEO (allowed by GPL), so users never run an unsigned engine. Development uses the official release binary, pinned by version and SHA-256.
+
+**Trial on the dev PC (mihomo v1.19.34, `mihomo-windows-amd64-compatible`, zip SHA-256 `CD6738D4…AB443A79`):**
+- TUN mode with `auto-route` created its own virtual adapter ("Meta Tunnel": mihomo embeds Wintun, no separate `wintun.dll` needed) and took over routing.
+- Two `type: direct` outbounds bound with `interface-name` (WiFi, Ethernet tether) plus one rule `PROCESS-NAME,curl.exe,via-eth`, with `find-process-mode: always`.
+- Two simultaneous 5 MB downloads to the same server: mihomo logged `(curl.exe) … match ProcessName(curl.exe) using via-eth` and `(powershell.exe) … match Match using via-wifi`; adapter counters agreed (tether +4.26 MB, WiFi +5.19 MB). Every other app stayed on the default route.
+- Stopping the engine removed the virtual adapter and restored normal routing immediately.
+- Notes for integration: mihomo watches the default interface itself (`default interface changed by monitor`): LEO must own that decision (`auto-detect-interface: false`, LEO rewrites the "default" outbound on Primary changes/failover). LEO's own health probes must keep bypassing the tunnel (they bind to the physical interface with `IP_UNICAST_IF`) — to verify. Process names alone are ambiguous; LEO's rules use full paths (`PROCESS-PATH`) and package families for Store apps.
+- Found on the way: GitHub's anonymous REST API was rate-limited on this network. LEO's updater (M8) should read `github.com/<repo>/releases/latest` (a redirect, not rate-limited) instead of `api.github.com`.
+
+**M3 as built (2026-11-22, live-tested on the dev PC):**
+- Apps page: master on/off, "Add app" from running apps (programs using the network or with a window), installed apps (Start menu + Microsoft Store apps by install folder), an .exe picker, a whole folder, or a file-name pattern (`game*.exe`). Each rule card: network, "if unavailable" (use Primary / block), "include programs it starts", active, remove, and a live "Now:" line saying where the app's traffic goes right now.
+- The engine only runs while split tunneling is on **and** at least one rule is active; otherwise LEO doesn't touch app traffic at all. Unruled traffic follows LEO's Primary (`MATCH,LEO-PRIMARY`); failover just re-points select groups through the engine API (no restart). Local/private ranges bypass the tunnel. Crash restarts back off 5/15/60 s and give up (with a notification) after 3 crashes in 10 minutes. The engine dies with the service (job object).
+- Verified: rule targets and fallback (target down → Primary, or Block → the app is cut off while other apps keep working); switching off removes the engine adapter and restores normal routing; child programs are picked up via process-start events.
+- **Child programs are routed by path** (the engine matches programs, not process IDs), so a child is routed wherever it runs. To keep one launcher from dragging shared tools along, programs inside the Windows folder (cmd, PowerShell, curl, ping, conhost…) are never added as children. A child's very first connection can slip out before the engine has its updated list; later ones are routed.
+- Privacy: the engine logs at warning level and LEO drops every per-connection line (app + address) before writing its own log.
+- Verified with two working networks (WiFi = Primary, phone USB tether = Ethernet, rule `curl.exe` → Ethernet): a 3 MB curl download arrived entirely on Ethernet (+2.98 MB, WiFi +0.00) while unruled apps stayed on WiFi; the engine didn't reduce WiFi throughput (same 3 MB download with the engine on and off).
+- Verified failover with the rule active: unplugging the tether → LEO marked Ethernet "no internet" and within ~1 s re-pointed the rule's group to Primary ("Now: WiFi (fallback: Ethernet is unavailable)"); curl kept working over WiFi without restarting anything.
