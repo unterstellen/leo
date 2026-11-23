@@ -144,6 +144,55 @@ public sealed class MihomoEngine(ILogger<MihomoEngine> log) : IDisposable
         }
     }
 
+    /// <summary>
+    /// The engine's live connection list (M5: stats + connections view). Kept in memory by the caller only:
+    /// it names apps and destinations, so it's never written to disk or the log.
+    /// </summary>
+    public async Task<IReadOnlyList<Leo.Core.Stats.EngineConnection>> GetConnectionsAsync(CancellationToken ct)
+    {
+        var (api, _, _) = Api();
+        using var r = await api.GetAsync("connections", ct);
+        r.EnsureSuccessStatusCode();
+        await using var stream = await r.Content.ReadAsStreamAsync(ct);
+        using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        return ParseConnections(doc.RootElement);
+    }
+
+    internal static IReadOnlyList<Leo.Core.Stats.EngineConnection> ParseConnections(System.Text.Json.JsonElement root)
+    {
+        var list = new List<Leo.Core.Stats.EngineConnection>();
+        if (!root.TryGetProperty("connections", out var conns) || conns.ValueKind != System.Text.Json.JsonValueKind.Array) return list;
+        foreach (var c in conns.EnumerateArray())
+        {
+            var meta = c.TryGetProperty("metadata", out var m) ? m : default;
+            string? S(System.Text.Json.JsonElement e, string name) =>
+                e.ValueKind == System.Text.Json.JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? v.GetString() : null;
+            long L(string name) => c.TryGetProperty(name, out var v) && v.TryGetInt64(out var n) ? n : 0;
+            var port = int.TryParse(S(meta, "destinationPort"), out var p) ? p
+                : meta.ValueKind == System.Text.Json.JsonValueKind.Object && meta.TryGetProperty("destinationPort", out var dp) && dp.TryGetInt32(out var pi) ? pi : 0;
+            var chains = c.TryGetProperty("chains", out var ch) && ch.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? ch.EnumerateArray().Select(x => x.GetString() ?? "").ToList() : [];
+            list.Add(new Leo.Core.Stats.EngineConnection(
+                S(c, "id") ?? "",
+                S(meta, "network") ?? "tcp",
+                NullIfEmpty(S(meta, "host")),
+                NullIfEmpty(S(meta, "sniffHost")),
+                S(meta, "destinationIP") ?? "",
+                port,
+                NullIfEmpty(S(meta, "processPath")),
+                L("upload"),
+                L("download"),
+                DateTimeOffset.TryParse(S(c, "start"), out var start) ? start : DateTimeOffset.Now,
+                chains,
+                S(c, "rule") ?? "",
+                S(c, "rulePayload") ?? ""));
+        }
+        return list;
+    }
+
+    private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
     /// <summary>Stops the engine and waits until its virtual adapter is gone.</summary>
     public async Task StopAsync(CancellationToken ct = default)
     {

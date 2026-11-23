@@ -21,6 +21,21 @@ public sealed class ConfigStore
     {
         _path = path;
         _config = Load(path);
+        var before = _config.SchemaVersion;
+        if (ConfigMigration.Upgrade(_config))
+        {
+            // Keep the file as it was before an upgrade (once per schema), then save the upgraded one.
+            try
+            {
+                var backup = $"{path}.v{before}.bak";
+                if (File.Exists(path) && before < ConfigMigration.CurrentSchema && !File.Exists(backup)) File.Copy(path, backup);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            try { Save(path, _config); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { } // read-only callers (tests, tools) keep the upgraded copy in memory
+        }
     }
 
     public string Path => _path;

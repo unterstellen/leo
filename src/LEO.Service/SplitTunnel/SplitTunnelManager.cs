@@ -38,6 +38,16 @@ public sealed class SplitTunnelManager(
 
     // ── API ─────────────────────────────────────────────────────────────────
 
+    /// <summary>Re-read rules from config (a profile switch replaced them).</summary>
+    public void RequestSync()
+    {
+        _gaveUp = false;
+        _signal.Release();
+    }
+
+    /// <summary>Running engine, or null. For stats and the connections view.</summary>
+    public MihomoEngine? RunningEngine => engine.IsRunning && _state == SplitTunnelEngineState.Running ? engine : null;
+
     public async Task SetEnabledAsync(bool enabled, CancellationToken ct)
     {
         config.Update(c =>

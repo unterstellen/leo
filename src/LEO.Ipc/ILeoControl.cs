@@ -109,6 +109,40 @@ public interface ILeoControl
     /// same network on the other band, giving a second independent link. Remembered and re-applied. Full access.
     /// </summary>
     Task SetDualLinkAsync(string adapterId, bool enabled, CancellationToken cancellationToken = default);
+
+    // ── Profiles (M5) ─────────────────────────────────────────────────────────
+
+    /// <summary>All profiles, the active one and why.</summary>
+    Task<ProfilesInfo> GetProfilesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Creates (Id null) or renames/re-triggers a profile; returns its id. Full access.</summary>
+    Task<string> SaveProfileAsync(ProfileEdit edit, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a profile (not Default). Deleting the active one switches to Default first. Full access.</summary>
+    Task DeleteProfileAsync(string profileId, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves a profile up/down: when several profiles' triggers match, the higher one wins. Full access.</summary>
+    Task MoveProfileAsync(string profileId, bool up, CancellationToken cancellationToken = default);
+
+    /// <summary>Switches to a profile by hand; null = back to automatic (the triggers decide now). Full access.</summary>
+    Task ActivateProfileAsync(string? profileId, CancellationToken cancellationToken = default);
+
+    /// <summary>Automatic switching on/off. Full access.</summary>
+    Task SetProfileAutoSwitchAsync(bool enabled, CancellationToken cancellationToken = default);
+
+    /// <summary>Raised when profiles, the active profile or its reason change.</summary>
+    event EventHandler<ProfilesInfo>? ProfilesChanged;
+
+    // ── Stats (M5) ────────────────────────────────────────────────────────────
+
+    /// <summary>Per-adapter throughput/totals/latency and per-app usage per network. Poll while a stats view is open.</summary>
+    Task<StatsSnapshot> GetStatsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Live connections through the routing engine (app → destination → network → rule). Never stored. Full access.</summary>
+    Task<ConnectionsSnapshot> GetConnectionsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes all saved statistics (stats.db). Full access.</summary>
+    Task ClearStatsAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed record HelloRequest(int ProtocolVersion, string ClientName, string ClientVersion);

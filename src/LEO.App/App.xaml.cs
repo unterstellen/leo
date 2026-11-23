@@ -41,6 +41,8 @@ public partial class App : Application
     public NetworksViewModel Networks { get; private set; } = null!;
     public AppsViewModel Apps { get; private set; } = null!;
     public DestinationsViewModel Destinations { get; private set; } = null!;
+    public ProfilesViewModel Profiles { get; private set; } = null!;
+    public StatsViewModel Stats { get; private set; } = null!;
 
     /// <summary>Main window handle, for Windows file/folder pickers.</summary>
     public IntPtr MainWindowHandle => _window is null ? IntPtr.Zero : WinRT.Interop.WindowNative.GetWindowHandle(_window);
@@ -52,6 +54,8 @@ public partial class App : Application
         Networks = new NetworksViewModel(Connection, _dispatcher);
         Apps = new AppsViewModel(Connection, _dispatcher);
         Destinations = new DestinationsViewModel(Connection, _dispatcher);
+        Profiles = new ProfilesViewModel(Connection, _dispatcher);
+        Stats = new StatsViewModel(Connection, _dispatcher);
 
         Toasts.Register(() => _dispatcher.TryEnqueue(ShowMainWindow));
         Connection.Notified += (_, n) =>
@@ -62,6 +66,7 @@ public partial class App : Application
 
         CreateTrayIcon();
         Networks.Refreshed += (_, _) => RebuildTrayMenu();
+        Profiles.Refreshed += (_, _) => RebuildTrayMenu();
         ViewModel.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MainViewModel.ConnectionText)) RebuildTrayMenu();
@@ -166,6 +171,46 @@ public partial class App : Application
                 {
                     if (alreadyPrimary) { RebuildTrayMenu(); return; } // keep the check mark
                     await Networks.SetPrimaryAsync(id);
+                });
+                items.Add(item);
+            }
+        }
+
+        // Profile switcher (LEO.md §6.9): pick one by hand, or let the triggers decide.
+        var profiles = Profiles.Info;
+        if (profiles.Profiles.Count > 1)
+        {
+            items.Add(new MenuFlyoutSeparator());
+            items.Add(new MenuFlyoutItem { Text = "Profile", IsEnabled = false });
+            var auto = new ToggleMenuFlyoutItem
+            {
+                Text = "Automatic",
+                IsChecked = profiles.AutoSwitch && !profiles.Manual && !profiles.Paused,
+                IsEnabled = Profiles.CanEdit,
+                Icon = new FontIcon { Glyph = "" },
+            };
+            var autoOn = auto.IsChecked;
+            auto.Command = new AsyncRelayCommand(async () =>
+            {
+                if (autoOn) { RebuildTrayMenu(); return; }
+                await Profiles.ActivateAsync(null);
+            });
+            items.Add(auto);
+            foreach (var p in profiles.Profiles)
+            {
+                var item = new ToggleMenuFlyoutItem
+                {
+                    Text = p.Name,
+                    IsChecked = p.IsActive,
+                    IsEnabled = Profiles.CanEdit,
+                    Icon = new FontIcon { Glyph = p.IsDefault ? "" : "" },
+                };
+                var id = p.Id;
+                var active = p.IsActive;
+                item.Command = new AsyncRelayCommand(async () =>
+                {
+                    if (active) { RebuildTrayMenu(); return; }
+                    await Profiles.ActivateAsync(id);
                 });
                 items.Add(item);
             }
