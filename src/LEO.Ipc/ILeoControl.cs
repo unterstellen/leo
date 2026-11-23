@@ -143,6 +143,14 @@ public interface ILeoControl
 
     /// <summary>Deletes all saved statistics (stats.db). Full access.</summary>
     Task ClearStatsAsync(CancellationToken cancellationToken = default);
+
+    // ── VPN coexistence (M6) ──────────────────────────────────────────────────
+
+    /// <summary>"Let unruled traffic skip this VPN" for the VPN with this key (machine-wide). Full access.</summary>
+    Task SetVpnSettingsAsync(string vpnKey, bool skipUnruled, CancellationToken cancellationToken = default);
+
+    /// <summary>Installed VPN clients LEO knows, for Add app → VPN clients.</summary>
+    Task<IReadOnlyList<VpnClientInfo>> GetVpnClientPresetsAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed record HelloRequest(int ProtocolVersion, string ClientName, string ClientVersion);

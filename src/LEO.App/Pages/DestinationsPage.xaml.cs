@@ -136,13 +136,19 @@ public sealed partial class DestinationsPage : Page
 
             var netBox = new ComboBox { Header = "Network", HorizontalAlignment = HorizontalAlignment.Stretch };
             foreach (var net in ViewModel.Networks)
-                netBox.Items.Add(new ComboBoxItem { Content = net.Name + (net.IsPrimary ? " (Primary)" : "") + (net.IsUp ? "" : " (not connected)"), Tag = net.Id });
+                netBox.Items.Add(new ComboBoxItem { Content = net.Label, Tag = net.Id });
             netBox.SelectedIndex = Math.Max(0, ViewModel.Networks.ToList().FindIndex(n => n.Id == rule.TargetAdapterId));
 
             var downBox = new ComboBox { Header = "If that network is unavailable", HorizontalAlignment = HorizontalAlignment.Stretch };
             downBox.Items.Add(new ComboBoxItem { Content = "Use the Primary network", Tag = OnTargetDown.FallbackPrimary });
             downBox.Items.Add(new ComboBoxItem { Content = "Block it", Tag = OnTargetDown.Block });
             downBox.SelectedIndex = (int)rule.OnTargetDown;
+            // New rules aimed at a VPN default to "Block it" (form state only; nothing is saved until "Save").
+            netBox.SelectionChanged += (_, _) =>
+            {
+                if (isNew && netBox.SelectedIndex >= 0 && ViewModel.Networks.ElementAtOrDefault(netBox.SelectedIndex) is { } picked)
+                    downBox.SelectedIndex = (int)(picked.IsVpn ? OnTargetDown.Block : OnTargetDown.FallbackPrimary);
+            };
 
             var nameBox = new TextBox { Header = "Name (optional)", Text = rule.DisplayName, MaxLength = 80 };
             var error = new TextBlock
@@ -233,7 +239,7 @@ public sealed partial class DestinationsPage : Page
         {
             var item = new ToggleMenuFlyoutItem
             {
-                Text = net.Name + (net.IsPrimary ? " (Primary)" : "") + (net.IsUp ? "" : " (not connected)"),
+                Text = net.Label,
                 IsChecked = net.Id == card.Info.TargetAdapterId,
             };
             var id = net.Id;
@@ -241,6 +247,9 @@ public sealed partial class DestinationsPage : Page
             {
                 if (id == card.Info.TargetAdapterId) return;
                 var rule = card.ToRule();
+                // Moving a rule onto a VPN: block when the VPN is down, as for new VPN rules (LEO.md §20.2).
+                var wasVpn = ViewModel.Networks.FirstOrDefault(n => n.Id == rule.TargetAdapterId)?.IsVpn == true;
+                if (net.IsVpn && !wasVpn) rule.OnTargetDown = OnTargetDown.Block;
                 rule.TargetAdapterId = id;
                 Run("Change network", () => ViewModel.SaveAsync(rule, $"network -> {net.Name}"));
             };

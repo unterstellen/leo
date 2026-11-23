@@ -33,7 +33,9 @@ internal static class InterfaceDns
                 last = ex;
             }
         }
-        throw new SocketException((int)SocketError.HostNotFound, $"DNS lookup for {host} failed via interface {interfaceIndex}: {last?.Message}");
+        // Keep "access denied" (a firewall filter) recognisable for the kill-switch detector (LEO.md §20.4).
+        var code = Leo.Core.Networking.ProbeErrors.Classify(last) == Leo.Core.Networking.ProbeError.Denied ? SocketError.AccessDenied : SocketError.HostNotFound;
+        throw new SocketException((int)code, $"DNS lookup for {host} failed via interface {interfaceIndex}: {last?.Message}");
     }
 
     private static async Task<IPAddress[]> QueryAsync(string host, IPAddress server, IPAddress localAddress, int interfaceIndex,

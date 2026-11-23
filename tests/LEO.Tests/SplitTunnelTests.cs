@@ -135,7 +135,9 @@ public sealed class EnginePlanTests
         off.Enabled = false;
         var plan = EnginePlan.Build(Both(), WiFi, [off], [new ChildProgram(@"C:\x.exe", "steam")]);
         Assert.Empty(plan.Providers);
-        Assert.Single(plan.Groups); // only LEO-PRIMARY
+        // Only LEO-PRIMARY, plus LEO-UNRULED (M6: unruled traffic; just the Primary while no VPN takes the default route).
+        Assert.Equal([EnginePlan.PrimaryGroup, EnginePlan.UnruledGroup], plan.Groups.Select(g => g.Name));
+        Assert.Equal([EnginePlan.PrimaryGroup], plan.Groups[1].Members);
     }
 
     [Fact]
@@ -147,7 +149,7 @@ public sealed class EnginePlanTests
         Assert.Contains("auto-detect-interface: false", yaml);
         Assert.Contains("- '192.168.0.0/16'", yaml);
         Assert.Contains("- 'RULE-SET,exact-to-62939052-fb,to-62939052-fb'", yaml);
-        Assert.EndsWith("- 'MATCH,LEO-PRIMARY'" + Environment.NewLine, yaml);
+        Assert.EndsWith("- 'MATCH,LEO-UNRULED'" + Environment.NewLine, yaml); // M6: unruled → LEO-UNRULED → Primary unless a VPN takes default
         var file = plan.ProviderFiles()["exact-to-62939052-fb"];
         Assert.Contains(@"PROCESS-PATH-REGEX,(?i)^C:\\Steam\\steam\.exe$", file);
     }

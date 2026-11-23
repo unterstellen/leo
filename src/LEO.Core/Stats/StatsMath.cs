@@ -125,7 +125,8 @@ public static class ConnectionDescriber
     public static string Rule(EngineConnection c, IReadOnlyList<AppRule> apps, IReadOnlyList<DestinationRule> dests,
         IReadOnlyList<ChildProgram> children)
     {
-        if (c.Rule.Equals("Match", StringComparison.OrdinalIgnoreCase)) return "No rule (Primary)";
+        if (c.Rule.Equals("Match", StringComparison.OrdinalIgnoreCase))
+            return c.Chains.Count > 0 && c.Chains[0].StartsWith("vpn-", StringComparison.Ordinal) ? "No rule (follows the VPN)" : "No rule (Primary)";
         var addresses = IPAddress.TryParse(c.DestinationIp, out var ip) ? new[] { ip } : [];
         var host = !string.IsNullOrWhiteSpace(c.Host) ? c.Host : c.SniffHost;
         var protocol = c.Network.Equals("udp", StringComparison.OrdinalIgnoreCase) ? DestinationProtocol.Udp : DestinationProtocol.Tcp;

@@ -51,6 +51,41 @@ public sealed class EngineConfigCheckTests
         var plan = EnginePlan.Build(adapters, WiFi, [chrome, games], [new ChildProgram(@"C:\Games\x\game.exe", "games")], dests, custom);
         Assert.Equal(6, plan.DestinationRules.Count);
 
+        await CheckAsync(engine, plan);
+    }
+
+    [Fact]
+    public async Task Config_With_Vpns_Guards_And_Unruled_Group_Passes_The_Engines_Own_Check()
+    {
+        var engine = FindEngine();
+        if (engine is null) return;
+
+        const string Ts = "{A1B2C3D4-0000-4000-8000-000000000001}";
+        const string Wg = "{E5F60718-0000-4000-8000-000000000002}";
+        List<EngineAdapter> adapters =
+        [
+            new(WiFi, "WiFi", true, true, false, HealthState.Up, ["192.168.90.1"]),
+            new(Eth, "Ethernet", true, true, false, HealthState.Up, ["192.168.42.129"]),
+            new(Ts, "Tailscale", false, true, false, HealthState.Up, ["100.100.100.100"], IsVpn: true, TakesDefault: true, RouteMetric: 5),
+            new(Wg, "home", false, true, false, HealthState.NoInternet, [], IsVpn: true),
+        ];
+        var curl = new AppRule { Id = "curl", Kind = AppMatchKind.ExactPath, Pattern = @"C:WindowsSystem32rl.exe", TargetAdapterId = Ts, OnTargetDown = OnTargetDown.Block };
+        var wg = new AppRule { Id = "wg", Kind = AppMatchKind.ExactPath, Pattern = @"C:Program FilesWireGuardwireguard.exe", TargetAdapterId = Eth };
+        var dests = new List<DestinationRule>
+        {
+            new() { Kind = DestinationKind.DomainSuffix, Value = "speed.cloudflare.com", TargetAdapterId = Eth },
+            new() { Kind = DestinationKind.DomainSuffix, Value = "intranet.example", TargetAdapterId = Wg, OnTargetDown = OnTargetDown.Block },
+        };
+        foreach (var d in dests) Assert.Null(DestinationMatcher.Normalize(d));
+        var nrpt = new List<NrptNamespace> { new(".tail1234.ts.net", Ts, ["100.100.100.100"]) };
+        var plan = EnginePlan.Build(adapters, WiFi, [curl, wg], [], dests, null, nrpt);
+        Assert.Equal(Ts, plan.UnruledVpnId);
+        Assert.NotEmpty(plan.GuardRules);
+        await CheckAsync(engine, plan);
+    }
+
+    private static async Task CheckAsync(string engine, EnginePlan plan)
+    {
         var dir = Path.Combine(Path.GetTempPath(), "leo-enginecheck-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(dir, "rules"));
         try

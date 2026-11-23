@@ -87,7 +87,7 @@ public sealed class StatsCollector(
                 return new TrafficTotals(rx, tx);
             }
 
-            var ids = snap.Adapters.Where(a => a.IsPrimaryCandidate).OrderBy(a => a.PriorityIndex ?? int.MaxValue).Select(a => a.Id).ToList();
+            var ids = snap.Adapters.Where(a => a.IsPrimaryCandidate || a.Kind == Leo.Core.Networking.AdapterKind.Vpn).OrderBy(a => a.PriorityIndex ?? int.MaxValue).Select(a => a.Id).ToList();
             foreach (var t in dbMonth) if (!ids.Contains(t.AdapterId, StringComparer.OrdinalIgnoreCase)) ids.Add(t.AdapterId); // unplugged, used this month
 
             var adapters = ids.Select(id =>
@@ -234,7 +234,7 @@ public sealed class StatsCollector(
         {
             var elapsed = _lastSample == DateTimeOffset.MinValue ? SampleSeconds : Math.Max(0.5, (now - _lastSample).TotalSeconds);
             _lastSample = now;
-            foreach (var a in snap.Adapters.Where(a => a.IsPrimaryCandidate))
+            foreach (var a in snap.Adapters.Where(a => a.IsPrimaryCandidate || a.Kind == Leo.Core.Networking.AdapterKind.Vpn))
             {
                 if (!_adapters.TryGetValue(a.Id, out var st)) _adapters[a.Id] = st = new AdapterState(a.DisplayName, a.Kind, latencyPoints);
                 st.Name = a.DisplayName;
@@ -372,7 +372,7 @@ public sealed class StatsCollector(
     }
 
     private static IReadOnlyList<OutboundAdapter> Outbounds(NetworkSnapshot snap) =>
-        snap.Adapters.Select(a => new OutboundAdapter(EnginePlan.OutboundName(a.Id), a.Id, a.DisplayName)).ToList();
+        snap.Adapters.Select(a => new OutboundAdapter(EnginePlan.OutboundName(a.Id, a.Kind == Leo.Core.Networking.AdapterKind.Vpn), a.Id, a.DisplayName)).ToList();
 
     private static List<T> ProfileOpsClone<T>(List<T> list) => Leo.Core.Profiles.ProfileOps.Clone(list);
 }

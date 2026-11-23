@@ -15,6 +15,9 @@
 
             <InfoBar IsOpen="True" IsClosable="False" Severity="{x:Bind ViewModel.StatusSeverity, Mode=OneWay}"
                      Title="{x:Bind ViewModel.StatusTitle, Mode=OneWay}" Message="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+            <InfoBar IsClosable="False" Severity="Warning" Title="VPN"
+                     IsOpen="{x:Bind ViewModel.VpnBanner, Mode=OneWay, Converter={StaticResource NotNullToBool}}"
+                     Message="{x:Bind ViewModel.VpnBanner, Mode=OneWay}" />
             <InfoBar x:Name="ErrorBar" IsOpen="False" Severity="Error" Title="Couldn't apply that"
                      Message="{x:Bind ViewModel.ErrorText, Mode=OneWay}" Closed="ErrorBar_Closed" />
 

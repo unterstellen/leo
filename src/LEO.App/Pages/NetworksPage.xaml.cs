@@ -46,6 +46,18 @@ public sealed partial class NetworksPage : Page
         }
     }
 
+    private async void SkipUnruled_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (sender is CheckBox { Tag: AdapterCardViewModel card } cb) await ViewModel.SetSkipUnruledAsync(card, cb.IsChecked == true);
+        }
+        catch (Exception ex)
+        {
+            Fail("VPN option", ex);
+        }
+    }
+
     private async void Wifi_Click(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is not AdapterCardViewModel card || _dialogOpen) return;
