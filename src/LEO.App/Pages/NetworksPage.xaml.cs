@@ -62,7 +62,7 @@ public sealed partial class NetworksPage : Page
                 DefaultButton = ContentDialogButton.Close,
             };
             dialog.Resources["ContentDialogMaxWidth"] = 640.0;
-            _ = vm.LoadAsync(rescan: false);
+            _ = vm.OpenAsync();
             await dialog.ShowAsync();
         }
         catch (Exception ex)
