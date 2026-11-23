@@ -17,6 +17,7 @@ public sealed partial class MainViewModel : ObservableObject
         _connection = connection;
         _dispatcher = dispatcher;
         _loading = true;
+        ApplyStartAtLoginDefault();
         StartAtLogin = StartupManager.IsEnabled;
         _loading = false;
         _connection.Changed += (_, _) => _dispatcher.TryEnqueue(Refresh);
@@ -59,8 +60,37 @@ public sealed partial class MainViewModel : ObservableObject
     partial void OnStartAtLoginChanged(bool value)
     {
         if (_loading) return;
-        try { StartupManager.SetEnabled(value); }
+        try
+        {
+            StartupManager.SetEnabled(value);
+            Ui.StartAtLogin = value; // the user's choice from now on
+            Ui.Save();
+        }
         catch { StartAtLogin = StartupManager.IsEnabled; }
+    }
+
+    /// <summary>
+    /// "Start at login" is on by default: on first launch (no choice saved) the app registers itself to start in the
+    /// tray at login. If it's on but points at another copy of LEO.exe (moved/rebuilt elsewhere), it's re-pointed here.
+    /// A user who turned it off keeps it off.
+    /// </summary>
+    private void ApplyStartAtLoginDefault()
+    {
+        try
+        {
+            if (Ui.StartAtLogin == false || StartupManager.IsEnabled) return;
+            StartupManager.SetEnabled(true);
+            if (Ui.StartAtLogin is null)
+            {
+                Ui.StartAtLogin = true;
+                Ui.Save();
+                UiLog.Write("Start at login: on (default)");
+            }
+        }
+        catch (Exception ex)
+        {
+            UiLog.Write("Couldn't turn on Start at login", ex);
+        }
     }
 
     private void Refresh()

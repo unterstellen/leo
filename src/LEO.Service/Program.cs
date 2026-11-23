@@ -45,6 +45,7 @@ builder.Services.AddHostedService(sp =>
     var wifi = sp.GetRequiredService<WifiManager>();
     var networks = sp.GetRequiredService<NetworkManager>();
     wifi.ConnectionChanged += (_, _) => networks.RequestRescan();
+    networks.Changed += (_, snap) => wifi.PrimaryAdapterId = snap.PrimaryAdapterId;
     return wifi;
 });
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.SplitTunnel.SplitTunnelManager>());
