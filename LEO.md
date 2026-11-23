@@ -311,7 +311,7 @@ leo-windows/
 | **M4** | Destination rules + DNS (**built**, §18) | Engine DNS (redir-host instead of fake-IP, §18), SNI sniffing, domain/CIDR/port rules, per-network DNS, precedence, "test a rule" |
 | **M5** | Profiles + Stats (**built**, §19) | Profiles with triggers; per-adapter/per-app stats; connections view |
 | **M6** | VPN coexistence (**built**, §20–§21) | VPN as underlay + as target + bypass; kill-switch detection |
-| **M7** | Bonding | Bond groups, balancing modes, sticky sessions |
+| **M7** | Bonding (designed, §22) | Bond groups, balancing modes, sticky sessions |
 | **M8** | Ship | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
 | *Future idea* | Bond through your own PC | Not planned. Single-stream bonding via the user's own second PC, never a hosted server (§15) |
 
@@ -714,3 +714,132 @@ Built from §20 with the §20.7 recommendations (fail-closed firewall rules: yes
 - **Skipped by the user's choice (Tailscale stays signed out, 2026-11-23); still to do when it is signed in:** VPN card "Connected · private network only", route-change detection when Tailscale connects, `vpn-` outbound + guards in the engine config, rule `curl.exe → Tailscale` with "(this VPN reports no internet access)" and Block on disconnect, unruled traffic staying on WiFi, `100.x` peers with the engine on. An exit node (takeover, `LEO-UNRULED` → Tailscale, DNS 100.100.100.100, connection closing) only with the user's OK.
 
 **Not exercised live (needs another VPN, §20.8):** host-route and plain clients (kinds 2/3, an underlay app rule moving the tunnel), a WFP kill switch (BlocksBypass, BlocksLeo stand-aside/resume, WFP owner naming), a VPN that pushes NRPT rules; route tamper (unit-tested logic only).
+
+---
+
+## 22. M7 design: bonding (2026-11-23)
+
+Design written before the build. Refines §6.8. Built on the M3–M6 engine: mihomo TUN, `type: direct` outbounds bound with `interface-name` (`net-<id>`, `vpn-<id>`), select groups re-pointed live through the engine API, `LEO-PRIMARY` (physical only) and `LEO-UNRULED` (`MATCH`). **No server of any kind** (§10, §15).
+
+**What the dev PC shows (read-only checks, 2026-11-23, engine not running because no rule is active):**
+- **Networks right now:** WiFi up (Qualcomm FastConnect 6900, 866.7 Mbps link, the only `0.0.0.0/0` route, metric 10); the phone USB tether is **not plugged in**; WiFi 2 is a secondary station of the same card, which can only join the *same* router (§12a M2), so it is no second path; Tailscale up but signed out (§21); Bluetooth PAN disconnected. A live bonding test needs the tether plugged in.
+- **One public address:** WiFi and the tether leave through the same public IP. If the phone's own upstream is the same Wi-Fi router, bonding the two can't add bandwidth beyond that router's line; live tests on this PC can prove **distribution** (adapter byte counters, as in M3–M5), not a **speed gain**. A speed gain needs the phone on mobile data (open question 3). It also means "a site sees two different addresses" (the main risk of per-connection spreading) can't be observed here.
+- **Engine support (pinned mihomo v1.19.34, `artifacts\engine`):** `mihomo -t` accepts `type: load-balance` with `strategy: consistent-hashing`, `sticky-sessions` and `round-robin`, `type: url-test` (with `tolerance`) and `type: fallback`, each with `url`, `expected-status`, `interval`, `timeout`, `lazy`, `max-failed-times`, built from `type: direct` members bound with `interface-name`, and a load-balance group as a member of a select group (`[bond, REJECT]`) and of `LEO-UNRULED`. There is **no** least-loaded strategy and **no** per-member weight option.
+- **Engine API (mihomo run briefly on loopback only: no TUN, no DNS, no health-check URL; stopped afterwards):** a load-balance group **keeps repeated members** (`"all": ["net-a","net-a","net-a","net-b"]`), which is how weights can be expressed (the actual split is to be verified in the build); `PUT /proxies/<load-balance group>` is refused (`"Must be a Selector"`), so **a bond's membership can't be changed live**, only by a config reload; a group without `url` reports `testUrl: https://www.gstatic.com/generate_204` (Google), so **LEO must always set the health-check URL itself** (§8: LEO's only own calls are updates and its configured probes).
+
+### 22.1 Bond groups
+
+**Decisions:**
+- **A bond** = a name, **2 to 8 member networks** in the user's order, a balancing mode (§22.2), a weight per member (1–5, used by the Weighted mode only) and "if every network in it is unavailable" (use Primary / Block, default **use Primary**). It is a Route Target (`Group:<id>`, §3) that app rules, destination rules and combos can pick, and that unruled traffic can use (§22.4).
+- **Members are physical networks only** (`IsPrimaryCandidate`: Wi-Fi, Ethernet, USB tether, cellular, Bluetooth), referenced like rule targets (adapter id, MAC fallback for re-plugged tethers). **VPNs can't be members:** a VPN rides on one of the same physical networks, so bonding it with its own underlay adds no bandwidth, and mixing a VPN with direct networks would send some of an app's connections outside the VPN. A rule aimed at a VPN stays a single-target rule (§20.2).
+- **A VPN client can't be routed into a bond** (refused on save: "A VPN's tunnel is one connection; bonding can't speed it up"). Its tunnel is one long flow that would stay on one member anyway and be torn down if that member left. The M6 loop guard therefore never points at a bond.
+- **Same-router members** (e.g. a DBS card's two stations on one router, or two Ethernet ports into one switch) are allowed, but the bond card says "WiFi and WiFi 2 use the same router: bonding them adds no internet speed" when LEO sees the same gateway MAC on two members.
+- **Metered members** (NLA's metered flag, §5.6) are allowed; the card warns "Phone (USB) is metered: about half of this bond's sites will use it" (share from the mode and weights) and suggests the Weighted mode to give it a low weight.
+- **Members that aren't connected** are left out of the engine group (the engine's outbounds only exist for connected adapters, as today; plugging in or unplugging already reloads the engine). A bond with **one** usable member keeps working on that member ("Bonding 1 of 2 networks: Phone (USB) is unavailable"). With **none**, the bond's rules get their "if unavailable" choice (§22.3).
+- **Bonds belong to the profile** (like rules, §19), stored live in `splitTunnel.bonds` and copied in and out by `ProfileOps` together with the rules that use them. Optional field, empty by default: **no config schema bump** (stays 2); stored profiles without bonds load with none.
+
+### 22.2 Balancing modes and sticky sessions
+
+**Decisions** (§6.8 named weighted, round-robin, least-latency and least-loaded; this maps them onto what the engine really has):
+
+| LEO mode (UI name) | Engine group | What it does | When to use |
+|---|---|---|---|
+| **By site** (default) | `load-balance`, `strategy: consistent-hashing` | Every connection to the same site (the engine hashes the registrable domain, e.g. `example.co.uk`, or the address when there's no name) goes to the same network; different sites spread over the members. Stateless: survives engine reloads and service restarts. When a member leaves, only *its* sites move. | Everyday browsing and apps; logins never see the address change |
+| **Weighted** | same, each member listed `weight` times | Like By site, but shares follow the weights (3 : 1 ≈ 75 % / 25 % of *sites*, not of bytes) | A slow or metered member that should take less |
+| **Every connection** | `load-balance`, `strategy: round-robin` | Each new connection goes to the next member, even to the same site. Gets the most out of many-connection downloads from **one** server (download managers, launcher CDNs, `aria2 -x`). A site sees the PC's connections arriving from several addresses when the members have different public IPs; sites that tie a login to the address may sign the user out. | Big downloads; the card says this |
+| **Fastest** | `url-test`, `tolerance: 50` (ms) | Not spreading: all new connections use the member with the lowest health-check latency, switching only when another is faster by more than the tolerance | A bond used as "always the quickest network" |
+
+- **Least-loaded is not offered:** the engine has no such strategy, and emulating it would mean LEO re-pointing select groups on every throughput sample (connections can't move once open, so it would only steer new ones, seconds late). Recorded as dropped from §6.8; it can come back if the engine gains it.
+- **Sticky sessions = the By site mode.** §6.8's "flows to the same destination stay on the same member for a set time" is met by consistent hashing *without* a time limit: a site stays on its member as long as that member is usable. mihomo's `sticky-sessions` strategy was considered and **not used**: it keys on *source* address + destination and remembers the choice in an in-engine cache for a fixed time that LEO can't configure; on one PC every flow comes from the same source (the TUN address), so it reduces to "by site, forgotten after a while", and it loses its memory on every config reload. Consistent hashing gives the same stickiness, deterministically. (`sticky-sessions` would only matter for traffic from several source addresses, i.e. LAN sharing, which LEO doesn't do: `allow-lan: false`.)
+- **No per-bond sticky time** is shown, because By site has none; the card explains "Each site stays on one network while that network works".
+- **UDP / QUIC:** handled by the same group; a QUIC connection is one flow and stays on one member. DNS is never spread (§22.5).
+
+### 22.3 Health checks and member loss
+
+**Decisions:**
+- **The engine checks members itself** (needed because membership can't be changed live, see the dev-PC findings): every bond group gets `url` = the first probe target from Settings that expects an HTTP status (default `http://cp.cloudflare.com/generate_204`, `expected-status: 204`; already one of LEO's probe targets, §5.7), `interval: 10`, `timeout: 3000`, `max-failed-times: 2` (failed dials trigger an early check), `lazy: true` (no checks while the bond carries nothing). A test asserts that **every** generated load-balance / url-test group has an explicit `url`, so the engine's Google default is never used. Each check goes out bound to that member (its `direct` outbound), so a captive portal (redirect instead of 204), a phone with no upstream, or a VPN kill switch blocking that network (§20.4) all make the member "not alive" and the engine skips it.
+- **LEO's own health stays in charge** of the decisions LEO already makes: when LEO's probe moves a member into or out of a failing category (or `BlockedByVpn`), LEO asks the engine to re-check that bond at once (engine API group delay test with the same URL; exact endpoint verified in the build), so the engine's view catches up in about a second instead of up to 10 s. `Degraded` members stay in (they work, just slower; Fastest avoids them on its own).
+- **No usable member:** every bond-targeted rule goes through a select group `to-bond<id>-fb` = [`bond-<id>`, `LEO-PRIMARY`] or `to-bond<id>-block` = [`bond-<id>`, `REJECT`], **switched live** by LEO (same mechanism as M3's `to-<adapter>-…` groups) when LEO's health says no member is usable. The engine's own "all members dead" behaviour (`emptyFallback`) is therefore never relied on; what it does is still checked in the build.
+- **Connections on a lost member** can't move to another network (no remote end, §15). LEO closes the engine's open connections whose chain went through that member *and* a bond (engine API `DELETE /connections/{id}`, as in §20.3, in memory only), so apps reconnect at once over the remaining members instead of waiting for TCP time-outs. Connections on members that keep working are left alone.
+- **A member coming back** rejoins on the next reload (adapter up) or the next health check (it stayed connected). In By site, about 1/N of the sites move back to it for **new** connections; open ones stay where they are.
+
+### 22.4 How bonds fit with failover, profiles, rules, VPNs and `LEO-UNRULED`
+
+**Decisions:**
+- **Failover and Primary are unchanged.** `LEO-PRIMARY` stays a select group of physical networks, failover re-points it, interface metrics never change for bonding. Primary still decides: traffic that bypasses the engine (local ranges, binding VPN clients, IPv6), the default DNS, LEO's own probes, and where a bond's rules go when the whole bond is down ("use Primary").
+- **Rules:** a bond is one more Route Target in the Apps and URLs & IPs pickers ("Fast downloads · bond"). Precedence is unchanged (App + destination > destination > app > Primary, §18); a rule's target being a bond changes nothing about which rule wins. "Test a rule" says "Uses: bond 'Fast downloads' (By site: WiFi + Phone (USB))"; the network of one connection is only known once it exists (connections view).
+- **Everything else through a bond:** a new per-profile setting **"Everything else uses: Primary | <bond>"** (default Primary). `LEO-UNRULED` becomes [`vpn-<id>`…, `bond-<id>`…, `LEO-PRIMARY`] and stays live-switched. What wins for unruled traffic: **a VPN that takes the default route (not skipped, §20.3) > the chosen bond > Primary.** The VPN wins because the user turned it on; with "Let unruled traffic skip this VPN" the bond gets unruled traffic again. When the bond has no usable member, `LEO-UNRULED` points at `LEO-PRIMARY`. With this setting the engine runs even with no rules (today it runs only while a rule is active).
+- **VPNs:** rules aimed at a bond bypass a VPN that takes the default route (they are physical-network rules, §20.3). Under a kill switch that blocks bypass (§20.4) the bond's members fail their engine health check and the rules fall to their "if unavailable" choice; the M6 banner already explains why. The M6 fail-closed firewall rules (VPN-targeted Block rules only) don't apply to bonds.
+- **Profiles:** bonds and "Everything else uses" switch with the profile; a switch that changes them reloads the engine like any rule change (§19). A bond referenced by no active rule and not chosen for unruled traffic is **not written into the engine config** (no idle health checks).
+- **Stats and connections view:** engine chains for bonded connections look like `net-<id> ← bond-<id> ← to-bond<id>-fb`; `StatsMath` keeps attributing bytes to the leaf outbound (the network that really carried them), so per-app per-network stats stay correct. The connections view shows "→ Phone (USB) via bond 'Fast downloads'". The bond card shows each member's live share of the bond's current traffic, computed from engine connections in memory (not stored; stats.db keeps daily totals per network as today, §19).
+
+### 22.5 DNS, IPv6, safety and privacy
+
+- **DNS for bond-targeted domains:** resolved through **one** member, deterministically: the Primary if it is a usable member, else the first usable member in the bond's order (`nameserver-policy` bound to that member's outbound, §18). DNS is not spread: a CDN answer then fits at least that member; with members on different ISPs the others may get a less ideal CDN node (documented). Unruled-through-bond keeps the Primary's DNS (or the VPN's, §20.3).
+- **IPv6:** the engine runs with IPv6 off (§18, §20.7), so bonding is **IPv4 only**; IPv6 follows Windows' routes (Primary). Shown on the bond card while a member has IPv6.
+- **Safety (§5.9):** bonding is engine config only. No routes, metrics, DNS settings or firewall rules are added for it. Engine stop or crash → plain Windows networking on Primary, as before. Bond edits, member up/down and profile switches reload the engine config (the reload path used since M4); member health, "no usable member" and `LEO-UNRULED` changes are live.
+- **Privacy:** the service log records bond ids, member adapter ids, mode, counts and verdicts ("bond b1: 1 of 2 usable"), never destinations, the sites that were hashed, or which app used which member. Member shares and connection closing use engine connection data in memory only. The engine stays at warning level and per-connection lines are dropped (§17).
+
+### 22.6 What bonding can't do: one connection = one network
+
+- Bonding spreads **connections**. A **single TCP connection** (one large file over one HTTP connection, a video call, a game session, a VPN tunnel) always runs over **one** member at that member's speed. Splitting one connection across networks needs a **remote end** that reassembles it and talks to the website with one address. That is the future idea in §15 (the user's own second PC, never a hosted server) and is **not part of M7**.
+- What gains: browsers loading many sites, torrents (many peers), download managers and launchers with parallel connections (Every connection mode for one server), several apps at once.
+- No seamless handover either: a connection on a member that drops is lost and reconnected by the app (§22.3); only §15's remote end could keep it alive.
+- The Bonding page says this in one sentence under the mode picker, and neither "Test a rule" nor the bond card ever promises a combined speed for one download.
+
+### 22.7 Implementation plan (for the M7 build session)
+
+**Core (`src/LEO.Core`):**
+- `SplitTunnel/Bond.cs` (new): `Bond { Id, Name, Members: [{ AdapterId, Mac, Weight }], Mode (BySite | Weighted | EveryConnection | Fastest), OnAllDown }`; validation (2–8 physical members, weights 1–5, unique name, no VPN members); `UsableMembers(bond, adapters)`; same-router detection (gateway MAC) and metered share for the card hints.
+- `SplitTunnel/AppRule.cs`: `SplitTunnelSettings.Bonds` and `UnruledBondId` (optional). Rule targets: `TargetAdapterId = "bond:<id>"` (adapter ids are GUIDs, no clash) with a `RuleTarget.IsBond / BondId` helper, so existing rule code keeps one target field. `RuleTargets.Check` refuses VPN client → bond; default "if unavailable" for bond targets = use Primary.
+- `SplitTunnel/EnginePlan.cs`: `EngineBond` input; one `bond-<id>` group per *referenced* bond (`load-balance` + strategy, or `url-test`; members = connected members' outbounds, repeated by weight for Weighted; health-check fields from the probe target); `to-bond<id>-fb|-block` select groups with live selection; `LEO-UNRULED` gains bond members and the selection order VPN > bond > Primary; DNS policy for bond domains (§22.5); `StructureKey` includes the bond groups. Engine run condition: active rules **or** an unruled bond.
+- `SplitTunnel/DestinationMatcher.cs` (`Decide`, "test a rule"): bond targets described with mode and members.
+- `Profiles/ProfileOps.cs`: capture/apply `Bonds` and `UnruledBondId` with the rules; a rule pointing at a missing bond is shown "Not active (its bond was removed)", like combos without their app (§18).
+- `Stats/StatsMath.cs`: leaf-outbound attribution already holds; `ConnectionDescriber` names the bond from the chain.
+
+**Service (`src/LEO.Service`):**
+- `SplitTunnel/SplitTunnelManager.cs`: save/delete/move bonds, set the unruled bond, validation, live `to-bond…` selections from LEO health, closing connections of a lost member, engine re-check on LEO health changes of a member, "Now:" lines ("Now: bond 'Fast downloads' · WiFi + Phone (USB)" / "Now: WiFi (Phone (USB) is unavailable)" / "Now: Primary (no network in the bond is available)").
+- `SplitTunnel/MihomoEngine.cs`: `CheckGroupAsync(group, url, timeout)` (group delay test); read per-member alive state for the bond card.
+- `Networking/NetworkManager.cs`: nothing new beyond exposing gateway MAC and metered state it already knows.
+
+**IPC (`src/LEO.Ipc`), protocol 9 → 10:**
+- `BondInfo` (id, name, mode, members with name / usable / alive in engine / weight / live share, all-down choice, hints: same router, metered share, IPv6 not bonded) in `SplitTunnelInfo.Bonds`; `SplitTunnelInfo.UnruledVia` gains the bond case.
+- `SaveBondAsync`, `DeleteBondAsync`, `MoveBondAsync`, `SetUnruledBondAsync(bondId | null)`; notification kind `BondMemberLost` (rate-limited, once per member per hour).
+
+**UI (`src/LEO.App`):**
+- New **Bonding** page (nav item after URLs & IPs): explanation line including the one-connection limit; "Everything else uses" picker (Primary / bonds); bond cards (members with state and share, mode, hints, Edit / Delete / move); **New bond** dialog (name, member checkboxes, weights shown only for Weighted, mode with one-line explanations, if unavailable), validated before it closes. Every action from Click handlers, one ContentDialog at a time.
+- Apps and URLs & IPs: pickers list networks, then VPNs (M6), then bonds ("Fast downloads · bond"). Status text "Everything else goes through bond 'X'".
+- Stats: connections view wording above; no new stats page.
+- Tray tooltip: "· everything else through bond 'X'" when set.
+
+### 22.8 Open questions (the user's call)
+
+1. **Default mode for a new bond:** By site (logins safe; one site's download stays on one network) or Every connection (fastest for single-server downloads; sites may see two addresses)? Recommendation: **By site** as the default, Every connection one click away with its warning.
+2. **Bonds per profile or machine-wide?** Recommendation: **per profile** (they travel with the rules that use them, §22.1). Machine-wide would keep a bond across profile switches, but rules in other profiles could then point at members that profile doesn't expect.
+3. **Live speed test over mobile data:** proving a real speed gain on the dev PC needs the phone tether on mobile data (metered, the user's data plan; WiFi and the tether currently share one public IP). Recommendation: live tests prove distribution over the shared uplink only (small downloads, as in M3–M5); a speed test over mobile data only if the user says yes, with a stated cap (e.g. 200 MB in total).
+4. **Standby members** ("use the phone only when the others are down" inside a bond, engine `fallback`): in M7 or later? Recommendation: **later**; Primary failover plus "if unavailable: use Primary" already covers the common case.
+5. **Engine health checks:** each bond in use sends one small HTTP request per member every 10 s to the probe target (Cloudflare by default), on top of LEO's 5 s probes. Acceptable, or rely on LEO's probes only (slower reaction, one engine reload per member health change)? Recommendation: **accept** (`lazy`, so idle bonds send nothing).
+
+### 22.9 Test plan
+
+**Unit tests (`tests/LEO.Tests`):**
+- Validation: 2–8 members, physical only (VPN refused), weights 1–5, unique names; VPN client → bond refused; bond target default "if unavailable" = use Primary.
+- `EnginePlan` with bonds: one `bond-<id>` per *referenced* bond only; mode → type/strategy (By site / Weighted = consistent-hashing, Every connection = round-robin, Fastest = url-test with tolerance); Weighted repeats members by weight; only connected members listed; **every load-balance / url-test group has an explicit `url`** and `expected-status` from Settings' probe target (never the engine default); `to-bond…-fb/-block` groups and their live selection (0 usable → `LEO-PRIMARY` / `REJECT`); `LEO-UNRULED` members and selection for: no bond, bond, bond + VPN taking default (VPN wins), VPN skipped (bond wins), bond with no usable member (Primary); `StructureKey` changes on bond edits and member up/down but not on health; engine runs with no rules when an unruled bond is set; DNS policy for bond domains (Primary member first, else first usable).
+- Real engine config check (`mihomo -t`, skipped without `artifacts\engine`) on a config with all four modes, weights, wrappers, `LEO-UNRULED` with a VPN and a bond, guards and destination rules.
+- Profiles: switches round-trip bonds and the unruled choice; old stored profiles without bonds load; a rule pointing at a deleted bond → "Not active".
+- Stats / connections: chain `net-x ← bond-y ← to-bondy-fb` attributes bytes to `net-x`; the describer names the bond; member shares from connection deltas.
+- Card hints: same router (same gateway MAC), metered share.
+- Privacy: log lines from bond handling contain ids and counts only (log-capture test as in M4/M6).
+
+**Live on the dev PC (WiFi = Primary, phone tether plugged in; distribution measured with adapter byte counters as in M3–M5; small downloads):**
+- **By site:** rule `curl.exe → bond (WiFi + Ethernet)`; 12 downloads from 12 different hosts → both counters move; repeating the same 12 → each host lands on the same network as before (stickiness).
+- **Every connection:** 8 parallel 5 MB downloads from one host (proof.ovh.net) → split over both networks (roughly 4 / 4).
+- **Weighted 3 : 1:** 20 distinct hosts → roughly 3 : 1 by host count (checks that repeated members really weight the hash).
+- **Fastest:** all new connections on the lower-latency member; the card agrees with the engine.
+- **Single stream:** one 100 MB download → entirely on one member (documents the §22.6 limit).
+- **Member loss:** unplug the tether during the Every-connection run → open tether connections closed by LEO, curl's next connections all on WiFi within about 1–10 s, card "Bonding 1 of 2"; replug → both used again. Whole bond down (WiFi off as well) **only with the user's OK**, since it removes the PC's main connection: rules fall to Primary / Block.
+- **Everything else through the bond:** unruled downloads from several hosts spread; the engine starts with no rules; set back to Primary → the engine stops when no rules remain.
+- **Profiles:** one profile with a bond and one without → switching reloads and the bond appears / disappears.
+- **Engine stop** with a bond active → routes, DNS and metrics identical to the snapshot taken before (as in §21).
+- Privacy: service log has bond ids only; no per-connection engine lines.
+- **Not possible on this PC without extra setup:** a real speed gain (open question 3); a site seeing two public addresses (both networks share one); Tailscale cases (signed out, §21).
