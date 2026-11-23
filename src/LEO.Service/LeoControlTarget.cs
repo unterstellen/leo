@@ -20,8 +20,11 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
     private readonly Leo.Service.SplitTunnel.SplitTunnelManager? _split;
 
     public LeoControlTarget(EngineStatusProvider status, NetworkManager? networks, ClientIdentity client, ILogger log,
-        WifiManager? wifi = null, NotificationHub? hub = null, Leo.Service.SplitTunnel.SplitTunnelManager? splitTunnel = null)
+        WifiManager? wifi = null, NotificationHub? hub = null, Leo.Service.SplitTunnel.SplitTunnelManager? splitTunnel = null,
+        Leo.Service.Profiles.ProfileManager? profiles = null, Leo.Service.Stats.StatsCollector? stats = null)
     {
+        _profiles = profiles;
+        _stats = stats;
         _status = status;
         _networks = networks;
         _wifi = wifi;
@@ -33,7 +36,57 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
         if (_networks is not null) _networks.Changed += OnNetworksChanged;
         if (_hub is not null) _hub.Raised += OnNotification;
         if (_split is not null) _split.Changed += OnSplitTunnelChanged;
+        if (_profiles is not null) _profiles.Changed += OnProfilesChanged;
     }
+
+    // ── Profiles + stats (M5) ───────────────────────────────────────────────
+
+    private readonly Leo.Service.Profiles.ProfileManager? _profiles;
+    private readonly Leo.Service.Stats.StatsCollector? _stats;
+
+    public event EventHandler<ProfilesInfo>? ProfilesChanged;
+
+    private void OnProfilesChanged(object? sender, ProfilesInfo e) => ProfilesChanged?.Invoke(this, e);
+
+    private Leo.Service.Profiles.ProfileManager Profiles =>
+        _profiles ?? throw new LocalRpcException("Profiles are not available.") { ErrorCode = LeoErrorCodes.InvalidOperation };
+
+    private Leo.Service.Stats.StatsCollector Stats =>
+        _stats ?? throw new LocalRpcException("Statistics are not available.") { ErrorCode = LeoErrorCodes.InvalidOperation };
+
+    public Task<ProfilesInfo> GetProfilesAsync(CancellationToken cancellationToken = default) => Task.FromResult(Profiles.Info);
+
+    public async Task<string> SaveProfileAsync(ProfileEdit edit, CancellationToken cancellationToken = default)
+    {
+        string id = "";
+        await Mutate(nameof(SaveProfileAsync), async () => id = await Profiles.SaveAsync(edit, cancellationToken));
+        return id;
+    }
+
+    public Task DeleteProfileAsync(string profileId, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(DeleteProfileAsync), () => Profiles.DeleteAsync(profileId, cancellationToken));
+
+    public Task MoveProfileAsync(string profileId, bool up, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(MoveProfileAsync), () => Profiles.MoveAsync(profileId, up, cancellationToken));
+
+    public Task ActivateProfileAsync(string? profileId, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(ActivateProfileAsync), () => Profiles.ActivateAsync(profileId, cancellationToken));
+
+    public Task SetProfileAutoSwitchAsync(bool enabled, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SetProfileAutoSwitchAsync), () => Profiles.SetAutoSwitchAsync(enabled, cancellationToken));
+
+    public Task<StatsSnapshot> GetStatsAsync(CancellationToken cancellationToken = default) => Task.FromResult(Stats.GetSnapshot());
+
+    /// <summary>Connections name other users' apps and destinations, so only administrators may see them (LEO.md §19).</summary>
+    public async Task<ConnectionsSnapshot> GetConnectionsAsync(CancellationToken cancellationToken = default)
+    {
+        if (_client.Access != ClientAccess.Full)
+            throw new LocalRpcException("Only administrators can see live connections.") { ErrorCode = LeoErrorCodes.AccessDenied };
+        return await Stats.GetConnectionsAsync(cancellationToken);
+    }
+
+    public Task ClearStatsAsync(CancellationToken cancellationToken = default) =>
+        Mutate(nameof(ClearStatsAsync), () => { Stats.Clear(); return Task.CompletedTask; });
 
     public event EventHandler<SplitTunnelInfo>? SplitTunnelChanged;
 
@@ -52,6 +105,30 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
 
     public Task DeleteAppRuleAsync(string ruleId, CancellationToken cancellationToken = default) =>
         Mutate(nameof(DeleteAppRuleAsync), () => Split.DeleteRuleAsync(ruleId, cancellationToken));
+
+    public Task SaveDestinationRuleAsync(Leo.Core.SplitTunnel.DestinationRule rule, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SaveDestinationRuleAsync), () => Split.SaveDestinationRuleAsync(rule, cancellationToken));
+
+    public Task DeleteDestinationRuleAsync(string ruleId, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(DeleteDestinationRuleAsync), () => Split.DeleteDestinationRuleAsync(ruleId, cancellationToken));
+
+    public Task MoveDestinationRuleAsync(string ruleId, bool up, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(MoveDestinationRuleAsync), () => Split.MoveDestinationRuleAsync(ruleId, up, cancellationToken));
+
+    public Task SetNetworkDnsAsync(string adapterId, IReadOnlyList<string> servers, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SetNetworkDnsAsync), () => Split.SetNetworkDnsAsync(adapterId, servers, cancellationToken));
+
+    public async Task<RouteTestResult> TestRouteAsync(string target, string? appPath, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await Split.TestRouteAsync(target, appPath, cancellationToken);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new LocalRpcException(ex.Message) { ErrorCode = LeoErrorCodes.InvalidOperation };
+        }
+    }
 
     public event EventHandler<EngineStatus>? StatusChanged;
 
@@ -219,5 +296,6 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
         if (_networks is not null) _networks.Changed -= OnNetworksChanged;
         if (_hub is not null) _hub.Raised -= OnNotification;
         if (_split is not null) _split.Changed -= OnSplitTunnelChanged;
+        if (_profiles is not null) _profiles.Changed -= OnProfilesChanged;
     }
 }

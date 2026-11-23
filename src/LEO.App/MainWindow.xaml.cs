@@ -82,12 +82,13 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
                 ContentFrame.Navigate(typeof(AppsPage));
                 break;
             case "Destinations":
-                ContentFrame.Navigate(typeof(ComingSoonPage), new ComingSoonInfo("URLs & IPs", "M4",
-                    "Send specific domains, IP ranges and ports through a chosen network."));
+                ContentFrame.Navigate(typeof(DestinationsPage));
                 break;
             case "Profiles":
-                ContentFrame.Navigate(typeof(ComingSoonPage), new ComingSoonInfo("Profiles", "M5",
-                    "Saved setups like Home, Office or Gaming that switch automatically."));
+                ContentFrame.Navigate(typeof(ProfilesPage));
+                break;
+            case "Stats":
+                ContentFrame.Navigate(typeof(StatsPage));
                 break;
         }
     }

@@ -159,7 +159,8 @@ public sealed class LiveInventoryTests(ITestOutputHelper output)
             var metric = IpHelper.GetMetric(index, AddressFamily.InterNetwork);
             output.WriteLine($"{nic.Name}: index={index} metric={metric}");
             Assert.NotNull(metric);
-            Assert.InRange(metric!.Value.Metric, 1, 9999);
+            // The engine's own tunnel adapter ("LEO", present while split tunneling runs) legitimately uses metric 0.
+            Assert.InRange(metric!.Value.Metric, nic.Name.Equals("LEO", StringComparison.OrdinalIgnoreCase) ? 0 : 1, 9999);
             checkedAny = true;
         }
         Assert.True(checkedAny);

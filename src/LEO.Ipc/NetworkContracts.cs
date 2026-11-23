@@ -79,6 +79,7 @@ public enum NotificationKind
     CaptivePortal = 4,
     WifiReconnected = 5,
     NoInternetAnywhere = 6,
+    ProfileSwitched = 7,
 }
 
 /// <summary>Something the user should hear about; the tray app shows it as a Windows notification.</summary>
