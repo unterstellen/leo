@@ -28,7 +28,11 @@ builder.Services.AddSingleton<NetworkManager>();
 builder.Services.AddSingleton<WifiManager>();
 builder.Services.AddSingleton<Leo.Service.SplitTunnel.MihomoEngine>();
 builder.Services.AddSingleton<Leo.Service.SplitTunnel.ChildProcessTracker>();
-builder.Services.AddSingleton<Leo.Service.SplitTunnel.SplitTunnelManager>();
+builder.Services.AddSingleton<VpnMonitor>();
+builder.Services.AddSingleton(sp => new Leo.Service.SplitTunnel.SplitTunnelManager(
+    sp.GetRequiredService<ConfigStore>(), sp.GetRequiredService<NetworkManager>(), sp.GetRequiredService<Leo.Service.SplitTunnel.MihomoEngine>(),
+    sp.GetRequiredService<Leo.Service.SplitTunnel.ChildProcessTracker>(), sp.GetRequiredService<NotificationHub>(),
+    sp.GetRequiredService<ILogger<Leo.Service.SplitTunnel.SplitTunnelManager>>(), sp.GetRequiredService<VpnMonitor>()));
 builder.Services.AddSingleton(sp => new Leo.Service.Profiles.ProfileManager(
     sp.GetRequiredService<ConfigStore>(), sp.GetRequiredService<NetworkManager>(), sp.GetRequiredService<NotificationHub>(),
     sp.GetRequiredService<ILogger<Leo.Service.Profiles.ProfileManager>>(), sp.GetRequiredService<WifiManager>(),
@@ -48,6 +52,7 @@ builder.Services.AddHostedService(sp =>
     networks.Changed += (_, snap) => wifi.PrimaryAdapterId = snap.PrimaryAdapterId;
     return wifi;
 });
+builder.Services.AddHostedService(sp => sp.GetRequiredService<VpnMonitor>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.SplitTunnel.SplitTunnelManager>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.Profiles.ProfileManager>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.Stats.StatsCollector>());

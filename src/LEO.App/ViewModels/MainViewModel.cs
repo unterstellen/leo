@@ -21,6 +21,7 @@ public sealed partial class MainViewModel : ObservableObject
         StartAtLogin = StartupManager.IsEnabled;
         _loading = false;
         _connection.Changed += (_, _) => _dispatcher.TryEnqueue(Refresh);
+        _connection.SplitTunnelChanged += (_, _) => _dispatcher.TryEnqueue(Refresh);
         Refresh();
     }
 
@@ -120,7 +121,11 @@ public sealed partial class MainViewModel : ObservableObject
             EngineStateText = ServiceVersionText = RunningAsText = UptimeText = ClientsText = AccessText = "—";
         }
 
-        TrayToolTip = IsConnected ? $"LEO — engine {EngineStateText.ToLowerInvariant()}" : $"LEO — {ConnectionText}";
+        // M6: say when unruled traffic follows a VPN, or a VPN paused split tunneling.
+        var split = _connection.SplitTunnel;
+        var vpnNote = split.State == SplitTunnelEngineState.StoodAside ? " · split tunneling paused by a VPN"
+            : split.UnruledVia is { } via ? $" · through {via}" : "";
+        TrayToolTip = IsConnected ? $"LEO — engine {EngineStateText.ToLowerInvariant()}{vpnNote}" : $"LEO — {ConnectionText}";
     }
 
     private static string FormatUptime(TimeSpan t) =>

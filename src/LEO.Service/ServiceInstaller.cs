@@ -58,6 +58,12 @@ internal static class ServiceInstaller
         if (rc is 0 or 1060) // 1060 = does not exist
         {
             Console.WriteLine($"LEO: service '{name}' removed.");
+            try
+            {
+                var n = Interop.FirewallRules.RemoveAll(); // only rules in LEO's own firewall group (LEO.md §21)
+                if (n > 0) Console.WriteLine($"LEO: removed {n} LEO firewall rule(s).");
+            }
+            catch (Exception ex) { Console.Error.WriteLine($"LEO: firewall cleanup failed: {ex.Message}"); }
             return 0;
         }
         return rc;

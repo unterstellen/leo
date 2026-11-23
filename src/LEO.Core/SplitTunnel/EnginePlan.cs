@@ -6,9 +6,18 @@ using Leo.Core.Networking;
 
 namespace Leo.Core.SplitTunnel;
 
-/// <summary>An adapter as the engine planner sees it.</summary>
+/// <summary>
+/// An adapter as the engine planner sees it. <paramref name="IsCandidate"/> = physical (Primary candidate).
+/// VPNs (M6, LEO.md §20.2): <paramref name="IsVpn"/>, <paramref name="IsUp"/> = connected (usable address);
+/// <paramref name="TakesDefault"/> = the VPN routes the default route itself; <paramref name="SkipUnruled"/> = the user's
+/// "Let unruled traffic skip this VPN"; <paramref name="RouteMetric"/> = its catch-all metric (two VPNs: lower wins).
+/// </summary>
 public sealed record EngineAdapter(string Id, string Alias, bool IsCandidate, bool IsUp, bool IsDemoted, HealthState Health,
-    IReadOnlyList<string>? DnsServers = null);
+    IReadOnlyList<string>? DnsServers = null, bool IsVpn = false, bool TakesDefault = false, bool SkipUnruled = false,
+    int RouteMetric = int.MaxValue);
+
+/// <summary>An NRPT rule (Windows' per-domain DNS, e.g. a VPN's split DNS) owned by a connected VPN (LEO.md §20.3).</summary>
+public sealed record NrptNamespace(string Namespace, string VpnId, IReadOnlyList<string> Servers);
 
 /// <summary>
 /// The engine's DNS (LEO.md §5.4, M4): every lookup goes out through a specific network, to that network's DNS.
@@ -61,33 +70,60 @@ public sealed class EnginePlan
     /// <summary>Equal keys ⇒ the running engine only needs live selection/provider updates, not a reload.</summary>
     public required string StructureKey { get; init; }
 
-    public static string OutboundName(string adapterId) => "net-" + Short(adapterId);
+    /// <summary>Loop guards (M6): one line per VPN client preset while any VPN outbound exists; matched before every other rule.</summary>
+    public IReadOnlyList<string> GuardRules { get; init; } = [];
+
+    /// <summary>The VPN unruled traffic follows right now (it takes the default route and isn't skipped), or null = Primary.</summary>
+    public string? UnruledVpnId { get; init; }
+
+    public const string UnruledGroup = "LEO-UNRULED";
+
+    public static string OutboundName(string adapterId, bool vpn = false) => (vpn ? "vpn-" : "net-") + Short(adapterId);
+    public static string OutboundName(EngineAdapter a) => OutboundName(a.Id, a.IsVpn);
     public static string GroupName(string adapterId, OnTargetDown mode) =>
         "to-" + Short(adapterId) + (mode == OnTargetDown.Block ? "-block" : "-fb");
 
     private static string Short(string adapterId) =>
         new string(adapterId.Where(char.IsAsciiLetterOrDigit).Take(8).ToArray()).ToLowerInvariant();
 
-    public static bool IsUsable(EngineAdapter a) => a.IsUp && !a.IsDemoted && !a.Health.IsFailing();
+    /// <summary>
+    /// Can carry a rule's traffic now. Physical: up, not demoted, not failing. VPN: connected — not only when its probe
+    /// is Up, because a split VPN carries specific destinations without carrying "the internet" (LEO.md §20.2).
+    /// </summary>
+    public static bool IsUsable(EngineAdapter a) => a.IsVpn ? a.IsUp : a.IsUp && !a.IsDemoted && !a.Health.IsFailing();
+
+    /// <summary>The VPN unruled traffic follows: takes default, not skipped by the user; lowest catch-all metric wins.</summary>
+    public static EngineAdapter? UnruledVpn(IEnumerable<EngineAdapter> adapters) =>
+        adapters.Where(a => a.IsVpn && a.IsUp && a.TakesDefault && !a.SkipUnruled)
+            .OrderBy(a => a.RouteMetric).ThenBy(a => a.Id, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
 
     public static EnginePlan Build(IReadOnlyList<EngineAdapter> adapters, string? primaryId,
         IReadOnlyList<AppRule> rules, IReadOnlyList<ChildProgram> children,
-        IReadOnlyList<DestinationRule>? destinations = null, IReadOnlyList<NetworkDnsSetting>? networkDns = null)
+        IReadOnlyList<DestinationRule>? destinations = null, IReadOnlyList<NetworkDnsSetting>? networkDns = null,
+        IReadOnlyList<NrptNamespace>? nrpt = null)
     {
         var dests = DestinationMatcher.Ordered(destinations ?? [], rules);
-        var up = adapters.Where(a => a.IsCandidate && a.IsUp).OrderBy(a => a.Id, StringComparer.OrdinalIgnoreCase).ToList();
-        var outbounds = up.Select(a => (OutboundName(a.Id), a.Alias, a.Id)).ToList();
-        var byId = adapters.ToDictionary(a => a.Id, StringComparer.OrdinalIgnoreCase);
+        var up = adapters.Where(a => (a.IsCandidate || a.IsVpn) && a.IsUp).OrderBy(a => a.Id, StringComparer.OrdinalIgnoreCase).ToList();
+        var physicalUp = up.Where(a => !a.IsVpn).ToList();
+        var vpnUp = up.Where(a => a.IsVpn).ToList();
+        var outbounds = up.Select(a => (OutboundName(a), a.Alias, a.Id)).ToList();
+        var byId = adapters.GroupBy(a => a.Id, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var upById = up.ToDictionary(a => a.Id, StringComparer.OrdinalIgnoreCase);
         var active = rules.Where(r => r.Enabled && !string.IsNullOrWhiteSpace(r.Pattern) && !string.IsNullOrWhiteSpace(r.TargetAdapterId)).ToList();
 
-        // Default route follows LEO's Primary (failover included).
+        // Default route follows LEO's Primary (failover included). Physical networks only: a VPN is never Primary.
         var groups = new List<(string, IReadOnlyList<string>)>();
         var selections = new List<GroupSelection>();
-        var primaryMembers = outbounds.Count > 0 ? outbounds.Select(o => o.Item1).ToList() : ["DIRECT"];
+        var primaryMembers = physicalUp.Count > 0 ? physicalUp.Select(OutboundName).ToList() : ["DIRECT"];
         groups.Add((PrimaryGroup, primaryMembers));
-        var primaryOut = primaryId is not null && up.Any(a => a.Id.Equals(primaryId, StringComparison.OrdinalIgnoreCase))
+        var primaryOut = primaryId is not null && physicalUp.Any(a => a.Id.Equals(primaryId, StringComparison.OrdinalIgnoreCase))
             ? OutboundName(primaryId) : primaryMembers[0];
         selections.Add(new GroupSelection(PrimaryGroup, primaryOut));
+
+        // Unruled traffic (M6): follows a VPN that takes the default route, else the Primary. Switched live.
+        var unruledVpn = UnruledVpn(vpnUp);
+        groups.Add((UnruledGroup, vpnUp.Select(OutboundName).Append(PrimaryGroup).ToList()));
+        selections.Add(new GroupSelection(UnruledGroup, unruledVpn is null ? PrimaryGroup : OutboundName(unruledVpn)));
 
         // One select group per (target, fallback mode), switched live as health changes.
         foreach (var (target, mode) in active.Select(r => (r.TargetAdapterId, r.OnTargetDown))
@@ -97,12 +133,26 @@ public sealed class EnginePlan
             var name = GroupName(target, mode);
             var alternative = mode == OnTargetDown.Block ? Reject : PrimaryGroup;
             var members = new List<string>();
-            var targetUp = up.Any(a => a.Id.Equals(target, StringComparison.OrdinalIgnoreCase));
-            if (targetUp) members.Add(OutboundName(target));
+            var targetUp = upById.TryGetValue(target, out var t);
+            if (targetUp) members.Add(OutboundName(t!));
             members.Add(alternative);
             groups.Add((name, members));
-            var usable = targetUp && byId.TryGetValue(target, out var t) && IsUsable(t);
-            selections.Add(new GroupSelection(name, usable ? OutboundName(target) : alternative));
+            var usable = targetUp && IsUsable(t!);
+            selections.Add(new GroupSelection(name, usable ? OutboundName(t!) : alternative));
+        }
+
+        // Loop guard (LEO.md §20.1): a VPN client's own transport never goes into a VPN — its own or another's — whatever
+        // "unruled follows the VPN" or a destination rule says. It goes where the user's underlay rule says, else Primary.
+        var guards = new List<string>();
+        if (vpnUp.Count > 0)
+        {
+            foreach (var preset in VpnClients.Presets)
+            {
+                var underlay = VpnClients.UnderlayRule(preset, active);
+                var target = underlay is not null && !(byId.TryGetValue(underlay.TargetAdapterId, out var u) && u.IsVpn)
+                    ? GroupName(underlay.TargetAdapterId, underlay.OnTargetDown) : PrimaryGroup;
+                guards.Add($"PROCESS-PATH-REGEX,{VpnClients.Regex(preset)},{target}");
+            }
         }
 
         // Providers in precedence order: exact > children > folder (deeper first) > name pattern.
@@ -128,15 +178,16 @@ public sealed class EnginePlan
             d.AppRuleId is null ? null : AppRuleMatcher.ToRegex(appById[d.AppRuleId]))).ToList();
         var sniff = dests.Any(d => d.Kind is DestinationKind.DomainExact or DestinationKind.DomainSuffix or DestinationKind.DomainKeyword);
 
-        var dnsPrimary = primaryId is not null && up.Any(a => a.Id.Equals(primaryId, StringComparison.OrdinalIgnoreCase))
-            ? primaryId : up.FirstOrDefault()?.Id;
-        var dns = BuildDns(up, dnsPrimary, dests, networkDns ?? []);
+        var dnsPrimary = primaryId is not null && physicalUp.Any(a => a.Id.Equals(primaryId, StringComparison.OrdinalIgnoreCase))
+            ? primaryId : physicalUp.FirstOrDefault()?.Id;
+        var dns = BuildDns(up, dnsPrimary, dests, networkDns ?? [], unruledVpn, nrpt ?? []);
 
-        // Reload when anything in config.yaml changes (outbounds, groups, destination rules, DNS); app rule lists
+        // Reload when anything in config.yaml changes (outbounds, groups, guard/destination rules, DNS); app rule lists
         // and selections are updated live.
         var key = string.Join("|", outbounds.Select(o => $"{o.Item1}={o.Alias}")) + "#" +
                   string.Join("|", groups.Select(g => $"{g.Item1}:{string.Join(",", g.Item2)}")) + "#" +
                   string.Join("|", providers.Select(p => p.Item1)) + "#" +
+                  string.Join("|", guards) + "#" +
                   string.Join("|", destLines) + "#" + sniff + "#" + DnsKey(dns);
 
         return new EnginePlan
@@ -145,12 +196,18 @@ public sealed class EnginePlan
             Groups = groups,
             Selections = selections,
             Providers = providers,
+            GuardRules = guards,
             DestinationRules = destLines,
             Dns = dns,
             Sniff = sniff,
+            UnruledVpnId = unruledVpn?.Id,
             StructureKey = key,
         };
     }
+
+    /// <summary>A VPN's own IPv4 DNS servers (no public fallback: a VPN that sets no DNS changes nothing).</summary>
+    public static IReadOnlyList<string> VpnDns(EngineAdapter a) =>
+        (a.DnsServers ?? []).Where(s => IPAddress.TryParse(s, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork).ToList();
 
     // ── DNS ──────────────────────────────────────────────────────────────────
 
@@ -167,13 +224,24 @@ public sealed class EnginePlan
     }
 
     private static EngineDns? BuildDns(IReadOnlyList<EngineAdapter> up, string? primaryId,
-        IReadOnlyList<DestinationRule> dests, IReadOnlyList<NetworkDnsSetting> custom)
+        IReadOnlyList<DestinationRule> dests, IReadOnlyList<NetworkDnsSetting> custom,
+        EngineAdapter? unruledVpn, IReadOnlyList<NrptNamespace> nrpt)
     {
         if (primaryId is null) return null;
         var byId = up.ToDictionary(a => a.Id, StringComparer.OrdinalIgnoreCase);
         var primary = byId[primaryId];
         var primaryServers = EffectiveDns(primary, custom);
-        var nameservers = primaryServers.Select(s => DnsServerSpec(s, OutboundName(primary.Id))).ToList();
+
+        // Default lookups go where unruled traffic goes: the VPN's own DNS through the VPN while unruled traffic follows
+        // it (LEO.md §20.3), else the Primary's. A VPN that sets no DNS changes nothing.
+        var defaultAdapter = primary;
+        IReadOnlyList<string> defaultServers = primaryServers;
+        if (unruledVpn is not null && VpnDns(unruledVpn) is { Count: > 0 } vpnServers)
+        {
+            defaultAdapter = unruledVpn;
+            defaultServers = vpnServers;
+        }
+        var nameservers = defaultServers.Select(s => DnsServerSpec(s, OutboundName(defaultAdapter))).ToList();
 
         // Plain-IP servers resolve the host names of DoH/DoT servers.
         var bootstrap = primaryServers.Where(s => IPAddress.TryParse(s, out _)).ToList();
@@ -184,12 +252,27 @@ public sealed class EnginePlan
         var policy = new List<(string, IReadOnlyList<string>)>();
         foreach (var d in dests.Where(d => d.Kind is DestinationKind.DomainSuffix or DestinationKind.DomainExact && d.AppRuleId is null))
         {
-            if (!byId.TryGetValue(d.TargetAdapterId, out var target) || target.Id.Equals(primaryId, StringComparison.OrdinalIgnoreCase)) continue;
+            if (!byId.TryGetValue(d.TargetAdapterId, out var target) || target.Id.Equals(defaultAdapter.Id, StringComparison.OrdinalIgnoreCase)) continue;
+            var servers = target.IsVpn ? VpnDns(target) : EffectiveDns(target, custom);
+            if (servers.Count == 0) continue; // a VPN without DNS of its own: the default servers answer
             var pattern = d.Kind == DestinationKind.DomainSuffix ? "+." + d.Value : d.Value;
             if (policy.Any(p => p.Item1 == pattern)) continue; // first (highest-precedence) rule wins
-            policy.Add((pattern, EffectiveDns(target, custom).Select(s => DnsServerSpec(s, OutboundName(target.Id))).ToList()));
+            policy.Add((pattern, servers.Select(s => DnsServerSpec(s, OutboundName(target))).ToList()));
         }
-        return new EngineDns(bootstrap.Select(s => DnsServerSpec(s, OutboundName(primary.Id))).ToList(), nameservers, policy);
+
+        // NRPT (corporate split DNS, Tailscale's MagicDNS names): names a connected VPN owns resolve through that VPN.
+        foreach (var n in nrpt)
+        {
+            if (!byId.TryGetValue(n.VpnId, out var vpn) || !vpn.IsVpn) continue;
+            var ns = n.Namespace.Trim().Trim('.');
+            if (ns.Length == 0 || IPAddress.TryParse(ns, out _) || ns.Contains(',') || ns.Contains('\'') || ns.Contains(' ')) continue;
+            var servers = n.Servers.Where(s => IPAddress.TryParse(s, out var ip) && ip.AddressFamily == AddressFamily.InterNetwork).ToList();
+            if (servers.Count == 0) continue;
+            var pattern = "+." + ns.ToLowerInvariant();
+            if (policy.Any(p => p.Item1 == pattern)) continue;
+            policy.Add((pattern, servers.Select(s => DnsServerSpec(s, OutboundName(vpn))).ToList()));
+        }
+        return new EngineDns(bootstrap.Select(s => DnsServerSpec(s, OutboundName(primary))).ToList(), nameservers, policy);
     }
 
     /// <summary>Engine nameserver entry bound to an outbound: "192.168.1.1#net-x", "https://dns.google/dns-query#net-x".</summary>
@@ -277,9 +360,10 @@ public sealed class EnginePlan
         }
 
         sb.AppendLine("rules:");
+        foreach (var line in GuardRules) sb.AppendLine($"  - {Q(line)}");
         foreach (var line in DestinationRules) sb.AppendLine($"  - {Q(line)}");
         foreach (var (name, group, _) in Providers) sb.AppendLine($"  - {Q($"RULE-SET,{name},{group}")}");
-        sb.AppendLine($"  - {Q("MATCH," + PrimaryGroup)}");
+        sb.AppendLine($"  - {Q("MATCH," + UnruledGroup)}");
         return sb.ToString();
     }
 

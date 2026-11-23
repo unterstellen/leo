@@ -121,6 +121,16 @@ public sealed partial class NetworksViewModel : ObservableObject
         ShowError(await _connection.TryInvokeAsync(c => c.SetDualLinkAsync(card.Id, enable)));
     }
 
+    /// <summary>"Let unruled traffic skip this VPN" (M6), from the card's checkbox Click.</summary>
+    public async Task SetSkipUnruledAsync(AdapterCardViewModel card, bool skip)
+    {
+        if (!CanEdit || card.Info.Vpn is not { } vpn) return;
+        UiLog.Write($"VPN {card.Info.Id}: unruled traffic {(skip ? "skips" : "follows")} it");
+        ShowError(await _connection.TryInvokeAsync(c => c.SetVpnSettingsAsync(vpn.Key, skip)));
+    }
+
+    public string? PrimaryName() => _connection.Networks.Adapters.FirstOrDefault(a => a.IsPrimary)?.DisplayName;
+
     private void ShowError(string? error)
     {
         if (error is not null) ErrorText = error;

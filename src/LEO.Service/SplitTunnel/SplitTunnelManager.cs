@@ -16,7 +16,7 @@ namespace Leo.Service.SplitTunnel;
 /// </summary>
 public sealed class SplitTunnelManager(
     ConfigStore config, NetworkManager networks, MihomoEngine engine, ChildProcessTracker children,
-    NotificationHub notifications, ILogger<SplitTunnelManager> log) : BackgroundService
+    NotificationHub notifications, ILogger<SplitTunnelManager> log, VpnMonitor? vpn = null) : BackgroundService
 {
     private static readonly TimeSpan[] Backoff = [TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(60)];
     private static readonly TimeSpan CrashWindow = TimeSpan.FromMinutes(10);
@@ -41,7 +41,7 @@ public sealed class SplitTunnelManager(
     /// <summary>Re-read rules from config (a profile switch replaced them).</summary>
     public void RequestSync()
     {
-        _gaveUp = false;
+        _gaveUp = _routesPaused = false;
         _signal.Release();
     }
 
@@ -56,7 +56,7 @@ public sealed class SplitTunnelManager(
             c.SplitTunnel.Enabled = enabled;
             return true;
         });
-        if (enabled) { _gaveUp = false; _crashes.Clear(); }
+        if (enabled) { _gaveUp = _routesPaused = false; _crashes.Clear(); }
         log.LogInformation("Split tunneling switched {State}", enabled ? "on" : "off");
         await SyncAsync(ct);
     }
@@ -69,7 +69,8 @@ public sealed class SplitTunnelManager(
             throw new ArgumentException("Use a full path, e.g. C:\\Program Files\\App\\app.exe.");
         if (string.IsNullOrWhiteSpace(rule.TargetAdapterId)) throw new ArgumentException("Choose the network for this app.");
         var target = networks.Snapshot.Adapters.FirstOrDefault(a => a.Id.Equals(rule.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
-        if (target is not null && !target.IsPrimaryCandidate) throw new ArgumentException($"{target.DisplayName} can't carry app traffic.");
+        if (target is not null && RuleTargets.Check(rule, target.Kind, target.DisplayName) is { } problem) throw new ArgumentException(problem);
+        if (target is not null) rule.TargetVpnKey = target.Vpn?.Key;
         if (string.IsNullOrWhiteSpace(rule.Id)) rule.Id = Guid.NewGuid().ToString("N");
         if (string.IsNullOrWhiteSpace(rule.DisplayName))
             rule.DisplayName = rule.Kind == AppMatchKind.ExactPath ? Path.GetFileNameWithoutExtension(rule.Pattern) : rule.Pattern;
@@ -81,7 +82,7 @@ public sealed class SplitTunnelManager(
             return true;
         });
         log.LogInformation("App rule saved: {Name} ({Kind}) -> {Target}", rule.DisplayName, rule.Kind, target?.DisplayName ?? rule.TargetAdapterId);
-        _gaveUp = false; // a user change deserves a fresh attempt
+        _gaveUp = _routesPaused = false; // a user change deserves a fresh attempt
         await SyncAsync(ct);
     }
 
@@ -101,7 +102,8 @@ public sealed class SplitTunnelManager(
         if (DestinationMatcher.Normalize(rule) is { } problem) throw new ArgumentException(problem);
         if (string.IsNullOrWhiteSpace(rule.TargetAdapterId)) throw new ArgumentException("Choose the network for this destination.");
         var target = networks.Snapshot.Adapters.FirstOrDefault(a => a.Id.Equals(rule.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
-        if (target is not null && !target.IsPrimaryCandidate) throw new ArgumentException($"{target.DisplayName} can't carry this traffic.");
+        if (target is not null && RuleTargets.Check(null, target.Kind, target.DisplayName) is { } targetProblem) throw new ArgumentException(targetProblem);
+        if (target is not null) rule.TargetVpnKey = target.Vpn?.Key;
         if (string.IsNullOrWhiteSpace(rule.AppRuleId)) rule.AppRuleId = null;
         if (rule.AppRuleId is not null && !config.Read(c => c.SplitTunnel.AppRules.Any(a => a.Id == rule.AppRuleId)))
             throw new ArgumentException("That app doesn't have a rule anymore. Choose another app or \"Any app\".");
@@ -116,7 +118,7 @@ public sealed class SplitTunnelManager(
         });
         // Destinations can be personal: log the rule's id and kind, not the domain/address.
         log.LogInformation("Destination rule saved: {Id} ({Kind}) -> {Target}", rule.Id, rule.Kind, target?.DisplayName ?? rule.TargetAdapterId);
-        _gaveUp = false;
+        _gaveUp = _routesPaused = false;
         await SyncAsync(ct);
     }
 
@@ -189,10 +191,12 @@ public sealed class SplitTunnelManager(
 
         var (apps, dests, enabled) = config.Read(c => (c.SplitTunnel.AppRules.Select(Clone).ToList(),
             c.SplitTunnel.DestinationRules.Select(Clone).ToList(), c.SplitTunnel.Enabled));
+        var snap = networks.Snapshot;
+        ResolveVpnTargets(apps, dests, snap);
         var query = new RouteQuery(host, addresses, port, DestinationProtocol.Tcp, appPath);
         var decision = DestinationMatcher.Decide(dests, apps, query);
-        var snap = networks.Snapshot;
         var primaryName = snap.Adapters.FirstOrDefault(a => a.IsPrimary)?.DisplayName ?? "your Primary network";
+        var unruledVia = _state == SplitTunnelEngineState.Running ? Info.UnruledVia : null;
 
         string ruleText, network, why;
         if (decision.Destination is { } d)
@@ -214,8 +218,9 @@ public sealed class SplitTunnelManager(
         else
         {
             ruleText = "No rule";
-            network = primaryName;
-            why = appPath is null ? "No destination rule matches, so it uses your Primary network." : "Neither a destination nor an app rule matches, so it uses your Primary network.";
+            network = unruledVia is null ? primaryName : $"{unruledVia} (follows the VPN)";
+            var where = unruledVia is null ? "your Primary network" : $"{unruledVia}, because that VPN takes all unruled traffic";
+            why = appPath is null ? $"No destination rule matches, so it uses {where}." : $"Neither a destination nor an app rule matches, so it uses {where}.";
         }
         if (!enabled) { network = primaryName; why = "Split tunneling is switched off, so everything uses your Primary network. " + why; }
         else if (_state != SplitTunnelEngineState.Running && (decision.Destination is not null || decision.App is not null))
@@ -227,21 +232,57 @@ public sealed class SplitTunnelManager(
             decision.Destination?.Id, decision.App?.Id, ruleText, network, why.Trim());
     }
 
-    /// <summary>"Ethernet", "WiFi (fallback: Ethernet is unavailable)", "Blocked (Ethernet is unavailable)".</summary>
+    // ── VPNs (M6) ───────────────────────────────────────────────────────────
+
+    /// <summary>"Let unruled traffic skip this VPN" (machine-wide, by VPN key).</summary>
+    public async Task SetVpnSettingsAsync(string vpnKey, bool skipUnruled, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(vpnKey)) throw new ArgumentException("Choose a VPN.");
+        config.Update(c =>
+        {
+            var list = c.SplitTunnel.Vpns;
+            var entry = list.FirstOrDefault(v => v.Key.Equals(vpnKey, StringComparison.OrdinalIgnoreCase));
+            if ((entry?.SkipUnruled ?? false) == skipUnruled) return false;
+            if (entry is null) list.Add(entry = new VpnSettings { Key = vpnKey });
+            entry.SkipUnruled = skipUnruled;
+            list.RemoveAll(v => !v.SkipUnruled);
+            return true;
+        });
+        log.LogInformation("VPN option: unruled traffic {Mode} a VPN", skipUnruled ? "skips" : "follows");
+        await networks.RefreshAsync(ct);
+        await SyncAsync(ct);
+    }
+
+    /// <summary>Rules that target a VPN find it again when it came back as a new adapter (same key; LEO.md §20.2).</summary>
+    private static void ResolveVpnTargets(IEnumerable<AppRule> apps, IEnumerable<DestinationRule> dests, NetworkSnapshot snap)
+    {
+        var present = snap.Adapters.Select(a => a.Id).ToList();
+        var vpns = snap.Adapters.Where(a => a.Vpn is not null).Select(a => new VpnCandidate(a.Id, a.Vpn!.Key, a.Vpn.Connected)).ToList();
+        foreach (var r in apps) r.TargetAdapterId = VpnIdentity.Resolve(r.TargetAdapterId, r.TargetVpnKey, present, vpns);
+        foreach (var d in dests) d.TargetAdapterId = VpnIdentity.Resolve(d.TargetAdapterId, d.TargetVpnKey, present, vpns);
+    }
+
+    /// <summary>
+    /// "Ethernet", "WiFi (fallback: Ethernet is unavailable)", "Blocked (Ethernet is unavailable)";
+    /// VPNs: "Tailscale (this VPN reports no internet access)", "Blocked (Tailscale is not connected)".
+    /// </summary>
     private static string RouteNow(bool ruleEnabled, string targetId, OnTargetDown mode, NetworkSnapshot snap)
     {
         var target = snap.Adapters.FirstOrDefault(a => a.Id.Equals(targetId, StringComparison.OrdinalIgnoreCase));
         var usable = target is not null && EnginePlan.IsUsable(ToEngine(target));
         var targetName = target?.DisplayName ?? "its network";
+        var down = target?.Kind == AdapterKind.Vpn ? "is not connected" : "is unavailable";
         var primary = snap.Adapters.FirstOrDefault(a => a.IsPrimary);
         return !ruleEnabled ? "Off"
-            : usable ? targetName
-            : mode == OnTargetDown.Block ? $"Blocked ({targetName} is unavailable)"
-            : $"{primary?.DisplayName ?? "Primary"} (fallback: {targetName} is unavailable)";
+            : usable ? targetName + (target!.Vpn is { Internet: false } ? " (this VPN reports no internet access)" : "")
+            : mode == OnTargetDown.Block ? $"Blocked ({targetName} {down})"
+            : $"{primary?.DisplayName ?? "Primary"} (fallback: {targetName} {down})";
     }
 
-    private static EngineAdapter ToEngine(AdapterInfo a) =>
-        new(a.Id, a.Name, a.IsPrimaryCandidate, a.Status == AdapterStatus.Up, a.IsDemoted, a.Health, a.DnsServers);
+    private static EngineAdapter ToEngine(AdapterInfo a) => a.Kind == AdapterKind.Vpn
+        ? new(a.Id, a.Name, false, a.Vpn?.Connected ?? false, false, a.Health, a.DnsServers, IsVpn: true,
+            TakesDefault: a.Vpn?.TakesDefault4 ?? false, SkipUnruled: a.Vpn?.SkipUnruled ?? false, RouteMetric: a.Vpn?.RouteMetric ?? int.MaxValue)
+        : new(a.Id, a.Name, a.IsPrimaryCandidate, a.Status == AdapterStatus.Up, a.IsDemoted, a.Health, a.DnsServers);
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -250,6 +291,7 @@ public sealed class SplitTunnelManager(
         networks.Changed += OnNetworksChanged;
         children.ChildrenChanged += OnSomethingChanged;
         engine.UnexpectedExit += OnEngineCrashed;
+        if (vpn is not null) vpn.Changed += OnVpnChanged;
         try
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -283,6 +325,7 @@ public sealed class SplitTunnelManager(
             networks.Changed -= OnNetworksChanged;
             children.ChildrenChanged -= OnSomethingChanged;
             engine.UnexpectedExit -= OnEngineCrashed;
+            if (vpn is not null) vpn.Changed -= OnVpnChanged;
         }
     }
 
@@ -296,6 +339,8 @@ public sealed class SplitTunnelManager(
     private void OnSomethingChanged(object? sender, EventArgs e) => _signal.Release();
 
     private void OnNetworksChanged(object? sender, NetworkSnapshot e) => _signal.Release();
+
+    private void OnVpnChanged(object? sender, VpnPicture e) => _signal.Release();
 
     private void OnEngineCrashed(object? sender, int code)
     {
@@ -329,7 +374,9 @@ public sealed class SplitTunnelManager(
             var (enabled, rules, dests, dns) = config.Read(c => (c.SplitTunnel.Enabled, c.SplitTunnel.AppRules.Select(Clone).ToList(),
                 c.SplitTunnel.DestinationRules.Select(Clone).ToList(),
                 c.SplitTunnel.NetworkDns.Select(d => new NetworkDnsSetting { AdapterId = d.AdapterId, Servers = [.. d.Servers] }).ToList()));
+            ResolveVpnTargets(rules, dests, networks.Snapshot);
             _dests = dests;
+            ReconcileFailClosed(enabled, rules);
             _dns = dns;
 
             var fingerprint = enabled + "|" + string.Join("|", rules.Select(r => $"{r.Id}:{r.Enabled}:{r.IncludeChildren}:{r.Kind}:{r.Pattern}"));
@@ -349,6 +396,7 @@ public sealed class SplitTunnelManager(
                     await engine.StopAsync(ct);
                 }
                 _structureKey = null;
+                _unruledVpnId = null;
                 SetState(SplitTunnelEngineState.Off, enabled ? null : "Split tunneling is switched off.", rules);
                 return;
             }
@@ -360,11 +408,72 @@ public sealed class SplitTunnelManager(
             if (_gaveUp)
             {
                 if (engine.IsRunning) await engine.StopAsync(ct);
-                SetState(SplitTunnelEngineState.Error, "The routing engine kept stopping, so split tunneling is paused. Switch it off and on to retry.", rules);
+                SetState(SplitTunnelEngineState.Error, _routesPaused
+                    ? "Another program keeps changing routes, so split tunneling is paused. Switch it off and on to retry."
+                    : "The routing engine kept stopping, so split tunneling is paused. Switch it off and on to retry.", rules);
                 return;
             }
 
-            var plan = BuildPlan(rules, dests, dns);
+            // A VPN whose firewall only allows its own tunnel blocks every app sending into LEO's adapter: stand aside
+            // (normal Windows routing = everything through the VPN) until that VPN disconnects (LEO.md §20.4).
+            var picture = vpn?.Picture ?? VpnPicture.Empty;
+            if (picture.Firewall.Verdict == KillSwitchVerdict.BlocksLeo)
+            {
+                var name = VpnName(picture.Firewall.VpnId, picture.FirewallOwner);
+                var message = $"Split tunneling paused: {name} only allows its own tunnel. It resumes when {name} disconnects.";
+                if (!_stoodAside)
+                {
+                    _stoodAside = true;
+                    log.LogWarning("Standing aside: VPN {Id} blocks LEO's adapter", picture.Firewall.VpnId);
+                    notifications.Publish(NotificationKind.SplitTunnelStoodAside, "Split tunneling paused", message, picture.Firewall.VpnId);
+                }
+                if (engine.IsRunning)
+                {
+                    SetState(SplitTunnelEngineState.StoodAside, message, rules);
+                    await engine.StopAsync(ct);
+                }
+                _structureKey = null;
+                _unruledVpnId = null;
+                SetState(SplitTunnelEngineState.StoodAside, message, rules);
+                return;
+            }
+            if (_stoodAside)
+            {
+                _stoodAside = false;
+                log.LogInformation("The VPN that blocked LEO disconnected; resuming split tunneling");
+                notifications.Publish(NotificationKind.SplitTunnelResumed, "Split tunneling resumed",
+                    "The VPN that only allowed its own tunnel disconnected, so LEO's rules apply again.");
+            }
+
+            // Another program removed LEO's routes: restart once; if it happens again soon, pause (LEO.md §20.3).
+            if (engine.IsRunning && !ReferenceEquals(picture, _lastPicture))
+            {
+                _lastPicture = picture;
+                if (picture.EngineRoutesPresent == false && DateTimeOffset.Now - _engineSince > TimeSpan.FromSeconds(15)) _routesMissing++;
+                else if (picture.EngineRoutesPresent == true) _routesMissing = 0;
+                if (_routesMissing >= 2)
+                {
+                    _routesMissing = 0;
+                    var now = DateTimeOffset.Now;
+                    _tampers.RemoveAll(t => now - t > CrashWindow);
+                    _tampers.Add(now);
+                    await engine.StopAsync(ct);
+                    _structureKey = null;
+                    _unruledVpnId = null;
+                    if (_tampers.Count >= 2)
+                    {
+                        _gaveUp = _routesPaused = true;
+                        log.LogWarning("LEO's routes were removed again; pausing split tunneling");
+                        notifications.Publish(NotificationKind.RoutesTampered, "Split tunneling paused",
+                            "Another program keeps changing routes, so LEO paused split tunneling. Your normal networking is unaffected. Turn it back on from the Apps page.");
+                        SetState(SplitTunnelEngineState.Error, "Another program keeps changing routes, so split tunneling is paused. Switch it off and on to retry.", rules);
+                        return;
+                    }
+                    log.LogWarning("LEO's routes were removed by another program; restarting the engine");
+                }
+            }
+
+            var plan = BuildPlan(rules, dests, dns, picture);
             if (!engine.IsRunning)
             {
                 if (DateTimeOffset.Now < _retryAt)
@@ -377,6 +486,8 @@ public sealed class SplitTunnelManager(
                 {
                     await engine.StartAsync(plan, ct);
                     _structureKey = plan.StructureKey;
+                    _engineSince = DateTimeOffset.Now;
+                    _unruledVpnId = null;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -391,11 +502,20 @@ public sealed class SplitTunnelManager(
             {
                 await engine.ReloadAsync(plan, ct);
                 _structureKey = plan.StructureKey;
+                _engineSince = DateTimeOffset.Now;
             }
             else
             {
                 await engine.UpdateProvidersAsync(plan, ct);
                 await engine.ApplySelectionsAsync(plan, ct);
+            }
+
+            if (!string.Equals(plan.UnruledVpnId, _unruledVpnId, StringComparison.OrdinalIgnoreCase))
+            {
+                var previous = _unruledVpnId;
+                _unruledVpnId = plan.UnruledVpnId;
+                log.LogInformation("Unruled traffic now follows {Target}", plan.UnruledVpnId is null ? "the Primary" : $"VPN {plan.UnruledVpnId}");
+                if (plan.UnruledVpnId is not null && previous is null) await CloseUnruledPhysicalAsync(ct);
             }
 
             SetState(SplitTunnelEngineState.Running, null, rules);
@@ -406,11 +526,81 @@ public sealed class SplitTunnelManager(
         }
     }
 
-    private EnginePlan BuildPlan(IReadOnlyList<AppRule> rules, IReadOnlyList<DestinationRule> dests, IReadOnlyList<NetworkDnsSetting> dns)
+    /// <summary>
+    /// A VPN started taking unruled traffic: close the engine's open unruled connections that run over a physical network,
+    /// so long-lived ones reconnect through the VPN (LEO.md §20.3). Ruled connections are left alone. Counts only in the log.
+    /// </summary>
+    private async Task CloseUnruledPhysicalAsync(CancellationToken ct)
+    {
+        try
+        {
+            var conns = await engine.GetConnectionsAsync(ct);
+            var closing = conns.Where(c => c.Rule.Equals("Match", StringComparison.OrdinalIgnoreCase)
+                                           && c.Chains.Count > 0 && c.Chains[0].StartsWith("net-", StringComparison.Ordinal)).ToList();
+            foreach (var c in closing) await engine.CloseConnectionAsync(c.Id, ct);
+            if (closing.Count > 0) log.LogInformation("Closed {Count} unruled connection(s) so they reconnect through the VPN", closing.Count);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
+        {
+            log.LogInformation("Closing unruled connections failed: {Message}", ex.Message);
+        }
+    }
+
+    private string VpnName(string? vpnId, string? owner) =>
+        owner ?? networks.Snapshot.Adapters.FirstOrDefault(a => a.Id.Equals(vpnId, StringComparison.OrdinalIgnoreCase))?.DisplayName ?? "Your VPN";
+
+    // ── Fail-closed firewall rules (LEO.md §20.7 Q1, §21) ──────────────────────
+
+    private string? _firewallKey;
+    private DateTimeOffset _firewallCheckedAt = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// Keeps LEO's own firewall group equal to the "VPN, else block" app rules: each such app is blocked from public
+    /// addresses on the physical adapters, so it can't go out directly even while the engine isn't running. Only rules in
+    /// LEO's group are ever changed. Re-checked when the wanted set changes and every 5 minutes (someone may delete them).
+    /// </summary>
+    private void ReconcileFailClosed(bool enabled, IReadOnlyList<AppRule> rules)
+    {
+        if (!OperatingSystem.IsWindows() || !ManageFirewall) return;
+        var snap = networks.Snapshot;
+        var wanted = FailClosedRules.Plan(enabled, rules, id => snap.Adapters.Any(a => a.Id.Equals(id, StringComparison.OrdinalIgnoreCase) && a.Kind == AdapterKind.Vpn));
+        var aliases = snap.Adapters.Where(a => a.IsPrimaryCandidate).Select(a => a.Name).Order(StringComparer.OrdinalIgnoreCase).ToList();
+        var key = string.Join("|", wanted.Select(w => w.Name + "=" + w.ProgramPath)) + "#" + string.Join(",", aliases);
+        if (key == _firewallKey && DateTimeOffset.Now - _firewallCheckedAt < TimeSpan.FromMinutes(5)) return;
+        try
+        {
+            var remote = FailClosedRules.PublicRemoteAddresses();
+            var (added, removed) = Leo.Service.Interop.FirewallRules.Reconcile(
+                wanted.Select(w => new Leo.Service.Interop.LeoFirewallRule(w.Name, w.ProgramPath, aliases, remote)).ToList());
+            if (added + removed > 0) log.LogInformation("Fail-closed firewall rules: {Count} wanted, {Added} added, {Removed} removed", wanted.Count, added, removed);
+            _firewallKey = key;
+            _firewallCheckedAt = DateTimeOffset.Now;
+        }
+        catch (Exception ex)
+        {
+            log.LogWarning("Updating LEO's firewall rules failed: {Message}", ex.Message);
+            _firewallCheckedAt = DateTimeOffset.Now; // retry in 5 minutes, not every sync
+            _firewallKey = key;
+        }
+    }
+
+    /// <summary>Tests turn this off so they never touch the real firewall.</summary>
+    public bool ManageFirewall { get; init; } = true;
+
+    private bool _stoodAside;
+    private bool _routesPaused;
+    private string? _unruledVpnId;
+    private VpnPicture? _lastPicture;
+    private int _routesMissing;
+    private DateTimeOffset _engineSince = DateTimeOffset.MaxValue;
+    private readonly List<DateTimeOffset> _tampers = [];
+
+    private EnginePlan BuildPlan(IReadOnlyList<AppRule> rules, IReadOnlyList<DestinationRule> dests, IReadOnlyList<NetworkDnsSetting> dns,
+        VpnPicture picture)
     {
         var snap = networks.Snapshot;
-        var adapters = snap.Adapters.Select(ToEngine).ToList();
-        return EnginePlan.Build(adapters, snap.PrimaryAdapterId, rules, children.Children, dests, dns);
+        var adapters = snap.Adapters.Where(a => a.IsPrimaryCandidate || a.Kind == AdapterKind.Vpn).Select(ToEngine).ToList();
+        return EnginePlan.Build(adapters, snap.PrimaryAdapterId, rules, children.Children, dests, dns, picture.Nrpt);
     }
 
     private List<DestinationRule> _dests = [];
@@ -423,19 +613,14 @@ public sealed class SplitTunnelManager(
         _message = message;
 
         var snap = networks.Snapshot;
-        var primary = snap.Adapters.FirstOrDefault(a => a.IsPrimary);
         var childCounts = children.Children.GroupBy(c => c.ParentRuleId).ToDictionary(g => g.Key, g => g.Count());
         var infos = rules.Select(r =>
         {
             var target = snap.Adapters.FirstOrDefault(a => a.Id.Equals(r.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
-            var usable = target is not null && EnginePlan.IsUsable(new EngineAdapter(target.Id, target.Name, target.IsPrimaryCandidate,
-                target.Status == AdapterStatus.Up, target.IsDemoted, target.Health));
-            var targetName = target?.DisplayName ?? "its network";
+            var usable = target is not null && EnginePlan.IsUsable(ToEngine(target));
             var route = !r.Enabled ? "Off"
                 : state != SplitTunnelEngineState.Running ? "Not active"
-                : usable ? targetName
-                : r.OnTargetDown == OnTargetDown.Block ? $"Blocked ({targetName} is unavailable)"
-                : $"{primary?.DisplayName ?? "Primary"} (fallback: {targetName} is unavailable)";
+                : RouteNow(true, r.TargetAdapterId, r.OnTargetDown, snap);
             return new AppRuleInfo(r.Id, r.DisplayName, r.Kind, r.Pattern, r.TargetAdapterId, r.OnTargetDown,
                 r.IncludeChildren, r.Enabled, route, usable, childCounts.GetValueOrDefault(r.Id));
         }).ToList();
@@ -462,7 +647,16 @@ public sealed class SplitTunnelManager(
                 EnginePlan.EffectiveDns(ToEngine(a), _dns));
         }).ToList();
 
-        var info = new SplitTunnelInfo(config.Read(c => c.SplitTunnel.Enabled), state, message, infos, destInfos, dnsInfos);
+        // M6: which VPN unruled traffic follows, and a banner when a VPN's firewall interferes.
+        var unruledVia = state == SplitTunnelEngineState.Running && _unruledVpnId is not null
+            ? snap.Adapters.FirstOrDefault(a => a.Id.Equals(_unruledVpnId, StringComparison.OrdinalIgnoreCase))?.DisplayName : null;
+        var picture = vpn?.Picture ?? VpnPicture.Empty;
+        var banner = state == SplitTunnelEngineState.StoodAside ? message
+            : picture.Firewall.Verdict == KillSwitchVerdict.BlocksBypass
+                ? $"{VpnName(picture.Firewall.VpnId, picture.FirewallOwner)} blocks traffic outside it. Rules that bypass it can't connect while it's on."
+                : null;
+
+        var info = new SplitTunnelInfo(config.Read(c => c.SplitTunnel.Enabled), state, message, infos, destInfos, dnsInfos, unruledVia, banner);
         if (!SameInfo(info, _info))
         {
             Volatile.Write(ref _info, info);
@@ -476,12 +670,12 @@ public sealed class SplitTunnelManager(
     private static DestinationRule Clone(DestinationRule r) => new()
     {
         Id = r.Id, DisplayName = r.DisplayName, Kind = r.Kind, Value = r.Value, Ports = r.Ports, Protocol = r.Protocol,
-        AppRuleId = r.AppRuleId, TargetAdapterId = r.TargetAdapterId, OnTargetDown = r.OnTargetDown, Enabled = r.Enabled,
+        AppRuleId = r.AppRuleId, TargetAdapterId = r.TargetAdapterId, TargetVpnKey = r.TargetVpnKey, OnTargetDown = r.OnTargetDown, Enabled = r.Enabled,
     };
 
     private static AppRule Clone(AppRule r) => new()
     {
-        Id = r.Id, DisplayName = r.DisplayName, Kind = r.Kind, Pattern = r.Pattern, TargetAdapterId = r.TargetAdapterId,
+        Id = r.Id, DisplayName = r.DisplayName, Kind = r.Kind, Pattern = r.Pattern, TargetAdapterId = r.TargetAdapterId, TargetVpnKey = r.TargetVpnKey,
         OnTargetDown = r.OnTargetDown, IncludeChildren = r.IncludeChildren, Enabled = r.Enabled,
     };
 }

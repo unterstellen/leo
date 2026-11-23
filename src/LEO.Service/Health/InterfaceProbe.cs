@@ -22,6 +22,7 @@ public static class InterfaceProbe
         int slowLatencyMs, CancellationToken ct)
     {
         string? lastError = null;
+        var lastClass = ProbeError.Other;
         foreach (var target in targets)
         {
             if (!Uri.TryCreate(target.Url, UriKind.Absolute, out var uri)) continue;
@@ -46,6 +47,7 @@ public static class InterfaceProbe
                         $"{uri.Host} answered {(int)status}{(redirected ? " (redirect)" : "")}");
                 }
                 lastError = $"{uri.Host}: HTTP {(int)status}";
+                lastClass = ProbeError.Other;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -60,9 +62,10 @@ public static class InterfaceProbe
             catch (Exception ex)
             {
                 lastError = $"{uri.Host}: {Flatten(ex)}";
+                lastClass = ProbeErrors.Classify(ex);
             }
         }
-        return new HealthReport(HealthState.NoInternet, null, DateTimeOffset.Now, lastError);
+        return new HealthReport(HealthState.NoInternet, null, DateTimeOffset.Now, lastError, lastClass);
     }
 
     private static async Task<(HttpStatusCode Status, string Body, int LatencyMs, bool Redirected)> GetAsync(
