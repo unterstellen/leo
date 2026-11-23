@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Leo.Core.Config;
 using Leo.Core.Networking;
 using Leo.Core.SplitTunnel;
@@ -82,6 +84,155 @@ public sealed class SplitTunnelManager(
         await SyncAsync(ct);
     }
 
+    // ── Destinations + DNS (M4) ──────────────────────────────────────────────
+
+    public async Task SaveDestinationRuleAsync(DestinationRule rule, CancellationToken ct)
+    {
+        if (DestinationMatcher.Normalize(rule) is { } problem) throw new ArgumentException(problem);
+        if (string.IsNullOrWhiteSpace(rule.TargetAdapterId)) throw new ArgumentException("Choose the network for this destination.");
+        var target = networks.Snapshot.Adapters.FirstOrDefault(a => a.Id.Equals(rule.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
+        if (target is not null && !target.IsPrimaryCandidate) throw new ArgumentException($"{target.DisplayName} can't carry this traffic.");
+        if (string.IsNullOrWhiteSpace(rule.AppRuleId)) rule.AppRuleId = null;
+        if (rule.AppRuleId is not null && !config.Read(c => c.SplitTunnel.AppRules.Any(a => a.Id == rule.AppRuleId)))
+            throw new ArgumentException("That app doesn't have a rule anymore. Choose another app or \"Any app\".");
+        if (string.IsNullOrWhiteSpace(rule.Id)) rule.Id = Guid.NewGuid().ToString("N");
+
+        config.Update(c =>
+        {
+            var list = c.SplitTunnel.DestinationRules;
+            var i = list.FindIndex(r => r.Id == rule.Id);
+            if (i >= 0) list[i] = rule; else list.Add(rule);
+            return true;
+        });
+        // Destinations can be personal: log the rule's id and kind, not the domain/address.
+        log.LogInformation("Destination rule saved: {Id} ({Kind}) -> {Target}", rule.Id, rule.Kind, target?.DisplayName ?? rule.TargetAdapterId);
+        _gaveUp = false;
+        await SyncAsync(ct);
+    }
+
+    public async Task DeleteDestinationRuleAsync(string ruleId, CancellationToken ct)
+    {
+        var removed = false;
+        config.Update(c => removed = c.SplitTunnel.DestinationRules.RemoveAll(r => r.Id == ruleId) > 0);
+        if (!removed) throw new KeyNotFoundException("That rule doesn't exist anymore.");
+        log.LogInformation("Destination rule deleted: {Id}", ruleId);
+        await SyncAsync(ct);
+    }
+
+    public async Task MoveDestinationRuleAsync(string ruleId, bool up, CancellationToken ct)
+    {
+        var found = false;
+        config.Update(c =>
+        {
+            var list = c.SplitTunnel.DestinationRules;
+            var i = list.FindIndex(r => r.Id == ruleId);
+            found = i >= 0;
+            var j = up ? i - 1 : i + 1;
+            if (i < 0 || j < 0 || j >= list.Count) return false;
+            (list[i], list[j]) = (list[j], list[i]);
+            return true;
+        });
+        if (!found) throw new KeyNotFoundException("That rule doesn't exist anymore.");
+        await SyncAsync(ct);
+    }
+
+    public async Task SetNetworkDnsAsync(string adapterId, IReadOnlyList<string> servers, CancellationToken ct)
+    {
+        var list = servers.Select(s => s.Trim()).Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (list.Count > 4) throw new ArgumentException("Use up to 4 DNS servers.");
+        foreach (var s in list)
+            if (EnginePlan.ValidateDnsServer(s) is { } problem) throw new ArgumentException(problem);
+        var adapter = networks.Snapshot.Adapters.FirstOrDefault(a => a.Id.Equals(adapterId, StringComparison.OrdinalIgnoreCase))
+                      ?? throw new KeyNotFoundException("That network isn't there anymore.");
+        config.Update(c =>
+        {
+            c.SplitTunnel.NetworkDns.RemoveAll(d => d.AdapterId.Equals(adapterId, StringComparison.OrdinalIgnoreCase));
+            if (list.Count > 0) c.SplitTunnel.NetworkDns.Add(new NetworkDnsSetting { AdapterId = adapter.Id, Servers = list });
+            return true;
+        });
+        log.LogInformation("DNS for {Adapter}: {Servers}", adapter.DisplayName, list.Count == 0 ? "automatic" : string.Join(", ", list));
+        await SyncAsync(ct);
+    }
+
+    public async Task<RouteTestResult> TestRouteAsync(string target, string? appPath, CancellationToken ct)
+    {
+        if (!DestinationMatcher.TryParseTarget(target, out var host, out var port, out var guessed))
+            throw new ArgumentException("Enter an address like youtube.com, https://example.com/page or 203.0.113.7:443.");
+        appPath = string.IsNullOrWhiteSpace(appPath) ? null : appPath.Trim();
+
+        var addresses = new List<IPAddress>();
+        string? lookupNote = null;
+        if (IPAddress.TryParse(host, out var literal)) addresses.Add(literal);
+        else
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(3));
+                addresses.AddRange((await Dns.GetHostAddressesAsync(host, AddressFamily.InterNetwork, cts.Token)).Take(8));
+            }
+            catch (Exception ex) when (ex is SocketException || ex is OperationCanceledException && !ct.IsCancellationRequested)
+            {
+                lookupNote = $"{host} couldn't be looked up, so IP-range rules weren't checked.";
+            }
+        }
+
+        var (apps, dests, enabled) = config.Read(c => (c.SplitTunnel.AppRules.Select(Clone).ToList(),
+            c.SplitTunnel.DestinationRules.Select(Clone).ToList(), c.SplitTunnel.Enabled));
+        var query = new RouteQuery(host, addresses, port, DestinationProtocol.Tcp, appPath);
+        var decision = DestinationMatcher.Decide(dests, apps, query);
+        var snap = networks.Snapshot;
+        var primaryName = snap.Adapters.FirstOrDefault(a => a.IsPrimary)?.DisplayName ?? "your Primary network";
+
+        string ruleText, network, why;
+        if (decision.Destination is { } d)
+        {
+            var app = d.AppRuleId is null ? null : apps.FirstOrDefault(a => a.Id == d.AppRuleId);
+            ruleText = "Rule: " + DestinationMatcher.Describe(d) + (app is null ? "" : $" from {app.DisplayName}");
+            network = RouteNow(d.Enabled, d.TargetAdapterId, d.OnTargetDown, snap);
+            why = d.Kind == DestinationKind.IpRange && !IPAddress.TryParse(host, out _)
+                ? $"{host} resolves to {string.Join(", ", addresses.Where(a => DestinationMatcher.TryParseRange(d.Value, out var n, out var p) && DestinationMatcher.InRange(a, n, p)))}, which is in {d.Value}."
+                : app is not null ? "This app + destination combo beats every other rule."
+                : "Destination rules beat app rules; the most specific destination rule wins.";
+        }
+        else if (decision.App is { } a)
+        {
+            ruleText = $"App rule: {a.DisplayName}";
+            network = RouteNow(a.Enabled, a.TargetAdapterId, a.OnTargetDown, snap);
+            why = "No destination rule matches, so the app's rule decides.";
+        }
+        else
+        {
+            ruleText = "No rule";
+            network = primaryName;
+            why = appPath is null ? "No destination rule matches, so it uses your Primary network." : "Neither a destination nor an app rule matches, so it uses your Primary network.";
+        }
+        if (!enabled) { network = primaryName; why = "Split tunneling is switched off, so everything uses your Primary network. " + why; }
+        else if (_state != SplitTunnelEngineState.Running && (decision.Destination is not null || decision.App is not null))
+            why += " (The routing engine isn't running right now.)";
+        if (guessed) why += $" Port {port} assumed.";
+        if (lookupNote is not null) why += " " + lookupNote;
+
+        return new RouteTestResult(host, port, guessed, addresses.Select(x => x.ToString()).ToList(),
+            decision.Destination?.Id, decision.App?.Id, ruleText, network, why.Trim());
+    }
+
+    /// <summary>"Ethernet", "WiFi (fallback: Ethernet is unavailable)", "Blocked (Ethernet is unavailable)".</summary>
+    private static string RouteNow(bool ruleEnabled, string targetId, OnTargetDown mode, NetworkSnapshot snap)
+    {
+        var target = snap.Adapters.FirstOrDefault(a => a.Id.Equals(targetId, StringComparison.OrdinalIgnoreCase));
+        var usable = target is not null && EnginePlan.IsUsable(ToEngine(target));
+        var targetName = target?.DisplayName ?? "its network";
+        var primary = snap.Adapters.FirstOrDefault(a => a.IsPrimary);
+        return !ruleEnabled ? "Off"
+            : usable ? targetName
+            : mode == OnTargetDown.Block ? $"Blocked ({targetName} is unavailable)"
+            : $"{primary?.DisplayName ?? "Primary"} (fallback: {targetName} is unavailable)";
+    }
+
+    private static EngineAdapter ToEngine(AdapterInfo a) =>
+        new(a.Id, a.Name, a.IsPrimaryCandidate, a.Status == AdapterStatus.Up, a.IsDemoted, a.Health, a.DnsServers);
+
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -165,7 +316,11 @@ public sealed class SplitTunnelManager(
         await _syncGate.WaitAsync(ct);
         try
         {
-            var (enabled, rules) = config.Read(c => (c.SplitTunnel.Enabled, c.SplitTunnel.AppRules.Select(Clone).ToList()));
+            var (enabled, rules, dests, dns) = config.Read(c => (c.SplitTunnel.Enabled, c.SplitTunnel.AppRules.Select(Clone).ToList(),
+                c.SplitTunnel.DestinationRules.Select(Clone).ToList(),
+                c.SplitTunnel.NetworkDns.Select(d => new NetworkDnsSetting { AdapterId = d.AdapterId, Servers = [.. d.Servers] }).ToList()));
+            _dests = dests;
+            _dns = dns;
 
             var fingerprint = enabled + "|" + string.Join("|", rules.Select(r => $"{r.Id}:{r.Enabled}:{r.IncludeChildren}:{r.Kind}:{r.Pattern}"));
             if (fingerprint != _rulesFingerprint)
@@ -174,7 +329,7 @@ public sealed class SplitTunnelManager(
                 children.SetRules(enabled ? rules : []);
             }
 
-            var wanted = enabled && rules.Any(r => r.Enabled);
+            var wanted = enabled && (rules.Any(r => r.Enabled) || DestinationMatcher.Ordered(dests, rules).Count > 0);
             if (!wanted)
             {
                 if (engine.IsRunning)
@@ -199,7 +354,7 @@ public sealed class SplitTunnelManager(
                 return;
             }
 
-            var plan = BuildPlan(rules);
+            var plan = BuildPlan(rules, dests, dns);
             if (!engine.IsRunning)
             {
                 if (DateTimeOffset.Now < _retryAt)
@@ -241,13 +396,15 @@ public sealed class SplitTunnelManager(
         }
     }
 
-    private EnginePlan BuildPlan(IReadOnlyList<AppRule> rules)
+    private EnginePlan BuildPlan(IReadOnlyList<AppRule> rules, IReadOnlyList<DestinationRule> dests, IReadOnlyList<NetworkDnsSetting> dns)
     {
         var snap = networks.Snapshot;
-        var adapters = snap.Adapters.Select(a => new EngineAdapter(a.Id, a.Name, a.IsPrimaryCandidate,
-            a.Status == AdapterStatus.Up, a.IsDemoted, a.Health)).ToList();
-        return EnginePlan.Build(adapters, snap.PrimaryAdapterId, rules, children.Children);
+        var adapters = snap.Adapters.Select(ToEngine).ToList();
+        return EnginePlan.Build(adapters, snap.PrimaryAdapterId, rules, children.Children, dests, dns);
     }
+
+    private List<DestinationRule> _dests = [];
+    private List<NetworkDnsSetting> _dns = [];
 
     private void SetState(SplitTunnelEngineState state, string? message, IReadOnlyList<AppRule> rules)
     {
@@ -273,7 +430,29 @@ public sealed class SplitTunnelManager(
                 r.IncludeChildren, r.Enabled, route, usable, childCounts.GetValueOrDefault(r.Id));
         }).ToList();
 
-        var info = new SplitTunnelInfo(config.Read(c => c.SplitTunnel.Enabled), state, message, infos);
+        var ordered = DestinationMatcher.Ordered(_dests, rules).ToList();
+        var destInfos = _dests.Select(d =>
+        {
+            var target = snap.Adapters.FirstOrDefault(a => a.Id.Equals(d.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
+            var usable = target is not null && EnginePlan.IsUsable(ToEngine(target));
+            var app = d.AppRuleId is null ? null : rules.FirstOrDefault(a => a.Id == d.AppRuleId);
+            var rank = ordered.FindIndex(o => o.Id == d.Id) + 1;
+            var route = !d.Enabled ? "Off"
+                : d.AppRuleId is not null && app is null ? "Not active (its app rule was removed)"
+                : app is { Enabled: false } ? $"Not active ({app.DisplayName}'s rule is off)"
+                : state != SplitTunnelEngineState.Running ? "Not active"
+                : RouteNow(true, d.TargetAdapterId, d.OnTargetDown, snap);
+            return new DestinationRuleInfo(d.Id, d.DisplayName, d.Kind, d.Value, d.Ports, d.Protocol, d.AppRuleId, app?.DisplayName,
+                d.TargetAdapterId, d.OnTargetDown, d.Enabled, DestinationMatcher.Describe(d), route, usable, rank);
+        }).ToList();
+        var dnsInfos = snap.Adapters.Where(a => a.IsPrimaryCandidate).OrderBy(a => a.PriorityIndex ?? int.MaxValue).Select(a =>
+        {
+            var custom = _dns.FirstOrDefault(d => d.AdapterId.Equals(a.Id, StringComparison.OrdinalIgnoreCase))?.Servers ?? [];
+            return new NetworkDnsInfo(a.Id, a.DisplayName, a.Status == AdapterStatus.Up, custom, a.DnsServers,
+                EnginePlan.EffectiveDns(ToEngine(a), _dns));
+        }).ToList();
+
+        var info = new SplitTunnelInfo(config.Read(c => c.SplitTunnel.Enabled), state, message, infos, destInfos, dnsInfos);
         if (!SameInfo(info, _info))
         {
             Volatile.Write(ref _info, info);
@@ -282,7 +461,13 @@ public sealed class SplitTunnelManager(
     }
 
     private static bool SameInfo(SplitTunnelInfo a, SplitTunnelInfo b) =>
-        a.Enabled == b.Enabled && a.State == b.State && a.Message == b.Message && a.Rules.SequenceEqual(b.Rules);
+        System.Text.Json.JsonSerializer.Serialize(a) == System.Text.Json.JsonSerializer.Serialize(b);
+
+    private static DestinationRule Clone(DestinationRule r) => new()
+    {
+        Id = r.Id, DisplayName = r.DisplayName, Kind = r.Kind, Value = r.Value, Ports = r.Ports, Protocol = r.Protocol,
+        AppRuleId = r.AppRuleId, TargetAdapterId = r.TargetAdapterId, OnTargetDown = r.OnTargetDown, Enabled = r.Enabled,
+    };
 
     private static AppRule Clone(AppRule r) => new()
     {

@@ -144,7 +144,8 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 
 ### 5.4 DNS
 - LEO runs a DNS resolver on the TUN interface. Windows' DNS points at it.
-- **Fake-IP mode** (default): domains get answers from `198.18.0.0/15` (and an IPv6 ULA range). LEO keeps the fake IP → domain map, so domain rules match exactly. The real lookup happens **through the target network** using that network's DNS.
+- *(As built in M4: **redir-host** instead of fake-IP, so cached answers survive an engine stop; see §18.)*
+- **Fake-IP mode** (original plan): domains get answers from `198.18.0.0/15` (and an IPv6 ULA range). LEO keeps the fake IP → domain map, so domain rules match exactly. The real lookup happens **through the target network** using that network's DNS.
 - **Per-network DNS**: each network can use its DHCP-provided DNS, custom DNS servers, or DoH/DoT.
 - Leak protection: plain DNS (port 53) to other servers is caught and answered by LEO.
 - Limits: browsers with Secure DNS / ECH may hide the domain. SNI sniffing covers most cases, and ECH-only connections fall back to IP rules or the app rule. Shown in the UI as "domain unknown".
@@ -306,7 +307,7 @@ leo-windows/
 | **M1** | Inventory + Primary + Nicknames | All adapters listed live; rename; one-click Primary via metrics; tray quick menu |
 | **M2** | Health + Failover + Wi-Fi mgmt | Per-interface probes; auto failover/failback; SSID pinning per adapter; toasts |
 | **M3** | TUN engine + App rules (**built**, §17) | Wintun up; all traffic goes through the engine; per-app routing works for TCP/UDP; safe restore if it crashes |
-| **M4** | Destination rules + DNS | Fake-IP DNS, SNI sniffing, domain/CIDR/port rules, per-network DNS, precedence, "test a rule" |
+| **M4** | Destination rules + DNS (**built**, §18) | Engine DNS (redir-host instead of fake-IP, §18), SNI sniffing, domain/CIDR/port rules, per-network DNS, precedence, "test a rule" |
 | **M5** | Profiles + Stats | Profiles with triggers; per-adapter/per-app stats; connections view |
 | **M6** | VPN coexistence | VPN as underlay + as target + bypass; kill-switch detection |
 | **M7** | Bonding | Bond groups, balancing modes, sticky sessions |
@@ -470,3 +471,33 @@ Rules regardless of option: release builds are made and signed in GitHub Actions
 - Privacy: the engine logs at warning level and LEO drops every per-connection line (app + address) before writing its own log.
 - Verified with two working networks (WiFi = Primary, phone USB tether = Ethernet, rule `curl.exe` → Ethernet): a 3 MB curl download arrived entirely on Ethernet (+2.98 MB, WiFi +0.00) while unruled apps stayed on WiFi; the engine didn't reduce WiFi throughput (same 3 MB download with the engine on and off).
 - Verified failover with the rule active: unplugging the tether → LEO marked Ethernet "no internet" and within ~1 s re-pointed the rule's group to Primary ("Now: WiFi (fallback: Ethernet is unavailable)"); curl kept working over WiFi without restarting anything.
+
+---
+
+## 18. M4 decisions: destination rules + DNS (2026-11-23)
+
+**Decisions:**
+- **Precedence** (implements §2/§6.5): **App + destination > destination > app > Primary.** Among destination rules: exact host name > domain with subdomains (more labels first) > keyword > IP range (narrower first) > "any destination" (ports only); a rule with a port/protocol filter beats the same rule without one; then the user's order (move up/down on the card). One pure function (`DestinationMatcher.Ordered`) decides the order for both the engine config and "test a rule", so they can't disagree.
+- **DNS: redir-host, not fake-IP.** The engine answers DNS with *real* addresses and remembers address→name, so domain rules still match exactly. Reason: with fake-IP, answers cached by Windows/apps point at addresses that stop working the moment the engine stops or crashes, which breaks §5.9 ("never brick the network"). With redir-host, stopping the engine leaves every cached answer valid.
+- **Sniffing**: TLS SNI, HTTP Host and QUIC (ports 80/8080-8880, 443/8443) are read while any domain rule is active, so domain rules work for apps with their own DNS (DoH) or cached addresses. `override-destination: false`: the connection still goes to the address the app chose; the name is only used for matching.
+- **Per-network DNS**: each network uses its own (DHCP) DNS servers, or the user's custom list (IPs, `https://` DoH, `tls://` DoT; up to 4). Every engine lookup is **bound to a network**: by default through the Primary to the Primary's DNS; for domains with a rule, through the target network to *its* DNS (`nameserver-policy`), so a CDN answer fits the network the traffic really uses. A target that is down gets no policy entry (its traffic falls back to Primary or is blocked, and so does its DNS). A network reporting no DNS falls back to 1.1.1.1/8.8.8.8 through that network.
+- **How Windows' DNS reaches the engine**: the engine's tunnel adapter gets DNS server 198.18.0.2 and `dns-hijack: any:53` answers it (and any plain DNS an app sends to a public server through the tunnel). DNS to the router itself (192.168.x.x) is a local address, so it bypasses the tunnel; Windows prefers the tunnel's DNS, and sniffing covers the rest.
+- **Rule syntax** in the engine: `DOMAIN`, `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR(6) … no-resolve`, `DST-PORT` (`80/443/8000-8100`), `NETWORK`, combined with `AND,((…),(…))`; combos add the app's `PROCESS-PATH-REGEX` (literal parentheses written `\x28`/`\x29` because the logic parser pairs raw brackets). Destination rules are inline in `rules:` (before the app rule lists), so editing one reloads the engine config; app rules and failover stay live. A primary change now also reloads (its DNS servers change).
+- **Validation**: domains are cleaned up (pasted URLs, `*.`, IDN → punycode), IP ranges are normalised (`203.0.113.77/24` → `203.0.113.0/24`); private/local ranges are refused (they never enter the tunnel); **IPv6 ranges are refused for now** because the engine runs with IPv6 off (rules would silently never match).
+- **Privacy**: the service logs a destination rule's id and kind, never the domain/address; engine lines about DNS, lookups and sniffing are dropped like per-connection lines (§17). The UI log records rule ids only.
+- **Combos keep their app**: deleting an app rule doesn't widen its combos to every app; they show "Not active (its app rule was removed)".
+
+**As built:**
+- Core: `DestinationRule` (+ `NetworkDnsSetting`) in `SplitTunnelSettings`; `DestinationMatcher` (normalise/validate, match, precedence, `Decide`, engine rule lines, URL/host:port parsing); `EnginePlan` emits destination rules, the `dns:` section (redir-host, bound nameservers, policy) and `sniffer:`.
+- Service: `SplitTunnelManager` saves/deletes/moves destination rules, sets per-network DNS, answers "test a rule" (one DNS lookup to check IP ranges), and runs the engine when either app or destination rules are active. IPC protocol 7: `SaveDestinationRuleAsync`, `DeleteDestinationRuleAsync`, `MoveDestinationRuleAsync`, `SetNetworkDnsAsync`, `TestRouteAsync`; `SplitTunnelInfo` carries `Destinations` and `NetworkDns`.
+- UI: **URLs & IPs** page: Add destination dialog (match type, address, ports, protocol, "From" app for combos, network, if unavailable, name; validated before it closes), rule cards (network, fallback, active, edit, move up/down, remove, "Now:" route, match rank), "Test a rule" (address + optional app → rule, network and why), "DNS per network" cards.
+- Tests: matcher/normalisation, precedence, `Decide` (combos, app fallback), engine rule lines, DNS plan, and a test that runs the real engine's config check (`mihomo -t`) on a config with every rule kind (skipped where `artifacts\engine` is absent, e.g. CI).
+
+**Verified live on the dev PC (2026-11-23, WiFi = Primary, phone USB tether = Ethernet, both behind one public IP, so checked by adapter byte counters):**
+- Rule `speed.cloudflare.com → Ethernet` (added and edited through the URLs & IPs page): two 5 MB downloads from it arrived **entirely on Ethernet** (+4.96 MB each, WiFi +0.00); unruled downloads from proof.ovh.net (10 MB and 100 MB) arrived **entirely on WiFi** (+10.71 / +103.68 MB, Ethernet +0.00).
+- Combined rule `141.95.207.0/24 · port 443 → Ethernet` (typed as an IP in the address box, detected as an IP range): a 10 MB HTTPS download from proof.ovh.net went over Ethernet (+10.39 MB, WiFi +0.01). Engine line: `AND,((IP-CIDR,141.95.207.0/24,no-resolve),(DST-PORT,443)),…`.
+- The engine's connection list showed the domain both from its DNS mapping and from SNI (`host`/`sniffHost` = example.com, rule `DomainSuffix`).
+- DNS: the tunnel adapter got DNS 198.18.0.2, Windows lookups went through the engine (≈ 90 ms uncached), and the ruled domain's DNS went to the tether's own DNS server bound to Ethernet (`'+.speed.cloudflare.com': '10.234.251.166#net-…'`). The service log contains rule ids only, no domains.
+- "Test a rule": `https://www.example.com/page` → "Rule: example.com and its subdomains · Uses: WiFi"; `proof.ovh.net` → "Rule: 141.95.207.0/24 · port 443 · Uses: Ethernet · proof.ovh.net resolves to 141.95.207.211, which is in 141.95.207.0/24. Port 443 assumed."
+- Plugging the tether in reloaded the engine with both networks without user action; removing the last rule stopped the engine, removed its adapter and left normal networking.
+- Not exercised live in M4: a destination rule's fallback/block when its network fails (same select-group mechanism as app rules, verified in M3), QUIC sniffing, and DoH/DoT custom servers (covered by the engine's config check only).

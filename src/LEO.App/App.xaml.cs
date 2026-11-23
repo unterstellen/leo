@@ -40,6 +40,7 @@ public partial class App : Application
     public MainViewModel ViewModel { get; private set; } = null!;
     public NetworksViewModel Networks { get; private set; } = null!;
     public AppsViewModel Apps { get; private set; } = null!;
+    public DestinationsViewModel Destinations { get; private set; } = null!;
 
     /// <summary>Main window handle, for Windows file/folder pickers.</summary>
     public IntPtr MainWindowHandle => _window is null ? IntPtr.Zero : WinRT.Interop.WindowNative.GetWindowHandle(_window);
@@ -50,6 +51,7 @@ public partial class App : Application
         ViewModel = new MainViewModel(Connection, _dispatcher);
         Networks = new NetworksViewModel(Connection, _dispatcher);
         Apps = new AppsViewModel(Connection, _dispatcher);
+        Destinations = new DestinationsViewModel(Connection, _dispatcher);
 
         Toasts.Register(() => _dispatcher.TryEnqueue(ShowMainWindow));
         Connection.Notified += (_, n) =>

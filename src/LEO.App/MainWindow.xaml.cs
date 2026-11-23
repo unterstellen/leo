@@ -82,8 +82,7 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
                 ContentFrame.Navigate(typeof(AppsPage));
                 break;
             case "Destinations":
-                ContentFrame.Navigate(typeof(ComingSoonPage), new ComingSoonInfo("URLs & IPs", "M4",
-                    "Send specific domains, IP ranges and ports through a chosen network."));
+                ContentFrame.Navigate(typeof(DestinationsPage));
                 break;
             case "Profiles":
                 ContentFrame.Navigate(typeof(ComingSoonPage), new ComingSoonInfo("Profiles", "M5",

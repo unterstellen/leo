@@ -81,6 +81,26 @@ public interface ILeoControl
     /// <summary>Deletes a rule. Full access.</summary>
     Task DeleteAppRuleAsync(string ruleId, CancellationToken cancellationToken = default);
 
+    // ── Split tunneling: destinations + DNS (M4) ──────────────────────────────
+
+    /// <summary>Adds a destination rule, or replaces the one with the same Id. Validated/normalised by the service. Full access.</summary>
+    Task SaveDestinationRuleAsync(Leo.Core.SplitTunnel.DestinationRule rule, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a destination rule. Full access.</summary>
+    Task DeleteDestinationRuleAsync(string ruleId, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves a destination rule one place up/down in the user's order (the tie-breaker). Full access.</summary>
+    Task MoveDestinationRuleAsync(string ruleId, bool up, CancellationToken cancellationToken = default);
+
+    /// <summary>Custom DNS servers for a network; empty = the network's own DNS. Full access.</summary>
+    Task SetNetworkDnsAsync(string adapterId, IReadOnlyList<string> servers, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Which rule and network a destination ("youtube.com", "https://x.com/a", "1.2.3.4:443") would use, optionally
+    /// for a program path. Read-only; may do one DNS lookup to check IP rules.
+    /// </summary>
+    Task<RouteTestResult> TestRouteAsync(string target, string? appPath, CancellationToken cancellationToken = default);
+
     /// <summary>Raised when the engine state, rules or their routes change.</summary>
     event EventHandler<SplitTunnelInfo>? SplitTunnelChanged;
 

@@ -230,7 +230,11 @@ public sealed class MihomoEngine(ILogger<MihomoEngine> log) : IDisposable
     {
         if (string.IsNullOrWhiteSpace(line)) return;
         if (line.Contains("[TCP]", StringComparison.Ordinal) || line.Contains("[UDP]", StringComparison.Ordinal)
-            || line.Contains(" dial ", StringComparison.Ordinal) || line.Contains("-->", StringComparison.Ordinal)) return;
+            || line.Contains(" dial ", StringComparison.Ordinal) || line.Contains("-->", StringComparison.Ordinal)
+            // DNS and sniffer lines name the domains being looked up (M4): never logged either.
+            || line.Contains("[DNS]", StringComparison.OrdinalIgnoreCase) || line.Contains("[Sniffer]", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("resolve", StringComparison.OrdinalIgnoreCase) || line.Contains("lookup", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("sniff", StringComparison.OrdinalIgnoreCase)) return;
         if (line.Contains("level=error", StringComparison.Ordinal) || line.Contains("level=fatal", StringComparison.Ordinal))
             log.LogWarning("engine: {Line}", Trim(line));
         else if (line.Contains("level=warning", StringComparison.Ordinal))

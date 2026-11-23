@@ -53,6 +53,30 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
     public Task DeleteAppRuleAsync(string ruleId, CancellationToken cancellationToken = default) =>
         Mutate(nameof(DeleteAppRuleAsync), () => Split.DeleteRuleAsync(ruleId, cancellationToken));
 
+    public Task SaveDestinationRuleAsync(Leo.Core.SplitTunnel.DestinationRule rule, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SaveDestinationRuleAsync), () => Split.SaveDestinationRuleAsync(rule, cancellationToken));
+
+    public Task DeleteDestinationRuleAsync(string ruleId, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(DeleteDestinationRuleAsync), () => Split.DeleteDestinationRuleAsync(ruleId, cancellationToken));
+
+    public Task MoveDestinationRuleAsync(string ruleId, bool up, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(MoveDestinationRuleAsync), () => Split.MoveDestinationRuleAsync(ruleId, up, cancellationToken));
+
+    public Task SetNetworkDnsAsync(string adapterId, IReadOnlyList<string> servers, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SetNetworkDnsAsync), () => Split.SetNetworkDnsAsync(adapterId, servers, cancellationToken));
+
+    public async Task<RouteTestResult> TestRouteAsync(string target, string? appPath, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            return await Split.TestRouteAsync(target, appPath, cancellationToken);
+        }
+        catch (ArgumentException ex)
+        {
+            throw new LocalRpcException(ex.Message) { ErrorCode = LeoErrorCodes.InvalidOperation };
+        }
+    }
+
     public event EventHandler<EngineStatus>? StatusChanged;
 
     public event EventHandler<NetworkSnapshot>? NetworksChanged;

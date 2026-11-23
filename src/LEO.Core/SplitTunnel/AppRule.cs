@@ -51,4 +51,10 @@ public sealed class SplitTunnelSettings
     public bool Enabled { get; set; } = true;
 
     public List<AppRule> AppRules { get; set; } = [];
+
+    /// <summary>Destination rules (M4), in the user's order (the tie-breaker within one specificity).</summary>
+    public List<DestinationRule> DestinationRules { get; set; } = [];
+
+    /// <summary>Custom DNS per network (M4). Networks not listed use their own DNS servers.</summary>
+    public List<NetworkDnsSetting> NetworkDns { get; set; } = [];
 }
