@@ -36,6 +36,10 @@ public sealed class AppRule
     /// <summary>Adapter id (interface GUID) the app should use.</summary>
     public string TargetAdapterId { get; set; } = "";
 
+    /// <summary>VPN targets only (M6): the VPN's key (<see cref="Leo.Core.Networking.VpnIdentity.KeyOf"/>), so the rule
+    /// finds the VPN again when it comes back as a new adapter. null for physical targets.</summary>
+    public string? TargetVpnKey { get; set; }
+
     public OnTargetDown OnTargetDown { get; set; } = OnTargetDown.FallbackPrimary;
 
     /// <summary>Also route programs this app starts (launchers → games, updaters…). Default on (decided 2026-11-22).</summary>
@@ -57,4 +61,19 @@ public sealed class SplitTunnelSettings
 
     /// <summary>Custom DNS per network (M4). Networks not listed use their own DNS servers.</summary>
     public List<NetworkDnsSetting> NetworkDns { get; set; } = [];
+
+    /// <summary>
+    /// Per-VPN options (M6), machine-wide like dual link: not part of a profile (profiles capture rules and DNS only).
+    /// </summary>
+    public List<VpnSettings> Vpns { get; set; } = [];
+}
+
+/// <summary>Options for one VPN, matched by its key (LEO.md §20.3).</summary>
+public sealed class VpnSettings
+{
+    /// <summary><see cref="Leo.Core.Networking.VpnIdentity.KeyOf"/> of the VPN adapter.</summary>
+    public string Key { get; set; } = "";
+
+    /// <summary>"Let unruled traffic skip this VPN": unruled traffic stays on Primary even when this VPN takes the default route.</summary>
+    public bool SkipUnruled { get; set; }
 }

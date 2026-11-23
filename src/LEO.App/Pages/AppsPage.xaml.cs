@@ -63,6 +63,10 @@ public sealed partial class AppsPage : Page
     private void AddInstalled_Click(object sender, RoutedEventArgs e) =>
         Run("Add app", () => PickFromListAsync("Add an installed app", AppCatalog.InstalledAppsAsync));
 
+    // M6: installed VPN clients (WireGuard, OpenVPN…): an app rule picks the network that carries the VPN tunnel.
+    private void AddVpnClient_Click(object sender, RoutedEventArgs e) =>
+        Run("Add VPN client", () => PickFromListAsync("Add a VPN client (choose the network that carries its tunnel)", ViewModel.VpnClientsAsync));
+
     private async Task PickFromListAsync(string title, Func<Task<List<AppCandidate>>> load)
     {
         if (_dialogOpen) return;
@@ -171,7 +175,7 @@ public sealed partial class AppsPage : Page
         {
             var item = new ToggleMenuFlyoutItem
             {
-                Text = net.Name + (net.IsPrimary ? " (Primary)" : "") + (net.IsUp ? "" : " (not connected)"),
+                Text = net.Label,
                 IsChecked = net.Id == card.Info.TargetAdapterId,
             };
             var id = net.Id;
@@ -179,6 +183,9 @@ public sealed partial class AppsPage : Page
             {
                 if (id == card.Info.TargetAdapterId) return;
                 var rule = card.ToRule();
+                // Moving a rule onto a VPN: block when the VPN is down, as for new VPN rules (LEO.md §20.2).
+                var wasVpn = ViewModel.Networks.FirstOrDefault(n => n.Id == rule.TargetAdapterId)?.IsVpn == true;
+                if (net.IsVpn && !wasVpn) rule.OnTargetDown = OnTargetDown.Block;
                 rule.TargetAdapterId = id;
                 Run("Change network", () => ViewModel.SaveAsync(rule, $"network -> {net.Name}"));
             };

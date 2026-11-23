@@ -88,6 +88,15 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
     public Task ClearStatsAsync(CancellationToken cancellationToken = default) =>
         Mutate(nameof(ClearStatsAsync), () => { Stats.Clear(); return Task.CompletedTask; });
 
+    // ── VPN coexistence (M6) ────────────────────────────────────────────────
+
+    public Task SetVpnSettingsAsync(string vpnKey, bool skipUnruled, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SetVpnSettingsAsync), () => Split.SetVpnSettingsAsync(vpnKey, skipUnruled, cancellationToken));
+
+    public Task<IReadOnlyList<VpnClientInfo>> GetVpnClientPresetsAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<VpnClientInfo>>(Leo.Core.SplitTunnel.VpnClients.Installed()
+            .Select(i => new VpnClientInfo(i.Preset.Name, i.ExePath)).ToList());
+
     public event EventHandler<SplitTunnelInfo>? SplitTunnelChanged;
 
     private void OnSplitTunnelChanged(object? sender, SplitTunnelInfo e) => SplitTunnelChanged?.Invoke(this, e);

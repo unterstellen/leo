@@ -193,6 +193,14 @@ public sealed class MihomoEngine(ILogger<MihomoEngine> log) : IDisposable
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
 
+    /// <summary>Closes one engine connection (M6: unruled connections move into a VPN that took the default route).</summary>
+    public async Task CloseConnectionAsync(string id, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return;
+        var (api, _, _) = Api();
+        using var r = await api.DeleteAsync($"connections/{Uri.EscapeDataString(id)}", ct);
+    }
+
     /// <summary>Stops the engine and waits until its virtual adapter is gone.</summary>
     public async Task StopAsync(CancellationToken ct = default)
     {

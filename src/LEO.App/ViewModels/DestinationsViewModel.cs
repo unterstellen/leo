@@ -45,10 +45,9 @@ public sealed partial class DestinationsViewModel : ObservableObject
     [ObservableProperty] public partial string TestNetworkText { get; set; } = "";
     [ObservableProperty] public partial string TestWhyText { get; set; } = "";
 
-    public IReadOnlyList<NetworkOption> Networks =>
-        _connection.Networks.Adapters.Where(a => a.IsPrimaryCandidate)
-            .OrderBy(a => a.PriorityIndex ?? int.MaxValue)
-            .Select(a => new NetworkOption(a.Id, a.DisplayName, a.Status == AdapterStatus.Up, a.IsPrimary)).ToList();
+    public IReadOnlyList<NetworkOption> Networks => NetworkOption.From(_connection.Networks);
+
+    [ObservableProperty] public partial string? VpnBanner { get; set; }
 
     /// <summary>"Any app" plus every app rule (combos). Only single-program rules can be used in a test.</summary>
     public IReadOnlyList<AppOption> Apps =>
@@ -72,7 +71,8 @@ public sealed partial class DestinationsViewModel : ObservableObject
     public NetworkOption? DefaultTarget()
     {
         var nets = Networks;
-        return nets.FirstOrDefault(n => n.IsUp && !n.IsPrimary) ?? nets.FirstOrDefault(n => n.IsPrimary) ?? nets.FirstOrDefault();
+        var physical = nets.Where(n => !n.IsVpn).ToList();
+        return physical.FirstOrDefault(n => n.IsUp && !n.IsPrimary) ?? physical.FirstOrDefault(n => n.IsPrimary) ?? nets.FirstOrDefault();
     }
 
     /// <summary>Saves a rule; returns the service's error (null = saved). The UI log never records the destination itself.</summary>
@@ -157,16 +157,18 @@ public sealed partial class DestinationsViewModel : ObservableObject
             : info.State switch
             {
                 SplitTunnelEngineState.Running => (InfoBarSeverity.Success, "Split tunneling is on",
-                    "Destinations below use their chosen network, even from apps that have their own rule. Everything else uses your Primary network."),
+                    info.UnruledVia is { } via ? $"Destinations below use their chosen network, even from apps that have their own rule. Everything else goes through {via} (that VPN takes all unruled traffic)." : "Destinations below use their chosen network, even from apps that have their own rule. Everything else uses your Primary network."),
                 SplitTunnelEngineState.Starting => (InfoBarSeverity.Informational, "Starting…", "LEO is starting its routing engine."),
                 SplitTunnelEngineState.Error => (InfoBarSeverity.Error, "Split tunneling paused", info.Message ?? "The routing engine stopped."),
                 SplitTunnelEngineState.NotInstalled => (InfoBarSeverity.Error, "Routing engine missing", info.Message ?? "Reinstall LEO."),
+                SplitTunnelEngineState.StoodAside => (InfoBarSeverity.Warning, "Split tunneling paused by a VPN", info.Message ?? "A VPN only allows its own tunnel."),
                 _ when !info.Enabled => (InfoBarSeverity.Informational, "Split tunneling is off",
                     "Your rules are kept, but everything uses the Primary network until you turn it back on."),
                 _ => (InfoBarSeverity.Informational, "No active rules",
                     "Add a website or address to choose which network it uses. Until then LEO doesn't touch traffic at all."),
             };
 
+        VpnBanner = IsConnected ? info.VpnBanner : null;
         Sync(Rules, dests, d => d.Id, c => c.Info.Id, () => new DestinationCardViewModel(this), (c, d) => c.Update(d, CanEdit, dests.Count));
         Sync(Dns, info.NetworkDns ?? [], d => d.AdapterId, c => c.Info.AdapterId, () => new NetworkDnsCardViewModel(), (c, d) => c.Update(d, CanEdit));
         IsEmpty = Rules.Count == 0;

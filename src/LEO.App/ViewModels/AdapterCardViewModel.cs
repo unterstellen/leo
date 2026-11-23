@@ -44,6 +44,14 @@ public sealed partial class AdapterCardViewModel : ObservableObject
     [ObservableProperty] public partial string DualLinkText { get; set; } = "";
     [ObservableProperty] public partial bool ShowWifiButton { get; set; }
 
+    // VPN cards (M6, LEO.md §20): no priority/Primary controls; what the VPN carries and how LEO treats it.
+    [ObservableProperty] public partial bool IsVpn { get; set; }
+    [ObservableProperty] public partial string VpnCarriesText { get; set; } = "";
+    [ObservableProperty] public partial string VpnOwnTrafficText { get; set; } = "";
+    [ObservableProperty] public partial string VpnFirewallText { get; set; } = "";
+    [ObservableProperty] public partial bool ShowSkipUnruled { get; set; }
+    [ObservableProperty] public partial bool SkipUnruled { get; set; }
+
     public void Update(AdapterInfo info, int candidateCount, bool canEdit)
     {
         Info = info;
@@ -97,6 +105,35 @@ public sealed partial class AdapterCardViewModel : ObservableObject
         CanMakePrimary = canEdit && info.IsPrimaryCandidate && info.PriorityIndex != 0;
         CanMoveUp = canEdit && info.PriorityIndex is > 0;
         CanMoveDown = canEdit && info.PriorityIndex is { } q && q < candidateCount - 1;
+
+        IsVpn = info.Vpn is not null;
+        if (info.Vpn is { } v)
+        {
+            var primary = _owner.PrimaryName();
+            VpnCarriesText = !v.Connected ? ""
+                : v.TakesDefault4 || v.TakesDefault6
+                    ? (v.SkipUnruled ? "Carries: all traffic (Windows routes) · unruled apps skip it while LEO's rules are active" : "Carries: all traffic")
+                        + (v.TakesDefault4 && !v.TakesDefault6 ? " · IPv6 follows Windows' routes" : "")
+                : v.PublicRanges > 0 ? $"Carries: {v.PublicRanges} address range{(v.PublicRanges == 1 ? "" : "s")} it routes itself · private networks"
+                : "Carries: private network only";
+            VpnOwnTrafficText = !v.Connected ? ""
+                : v.OwnTrafficRuled && v.OwnTrafficVia is { } via ? $"Its own traffic: carried by {via} (app rule)"
+                : $"Its own traffic: chooses its own network (follows Primary{(primary is null ? "" : ": " + primary)})";
+            VpnFirewallText = v.Firewall switch
+            {
+                VpnFirewall.BlocksBypass => $"{v.FirewallOwner ?? info.DisplayName}'s firewall blocks traffic outside the VPN. Rules that bypass it can't connect while it's on; the VPN's own settings decide this.",
+                VpnFirewall.BlocksLeo => $"{v.FirewallOwner ?? info.DisplayName} only allows its own tunnel, so LEO paused split tunneling until it disconnects.",
+                _ => "",
+            };
+            ShowSkipUnruled = v.TakesDefault4;
+            SkipUnruled = v.SkipUnruled;
+            DetailsText = string.Join("  ·  ", new[] { DetailsText, v.DnsServers > 0 ? $"{v.DnsServers} DNS server{(v.DnsServers == 1 ? "" : "s")}" : "", v.NrptRules > 0 ? $"{v.NrptRules} DNS name rule{(v.NrptRules == 1 ? "" : "s")}" : "" }.Where(s => s.Length > 0));
+        }
+        else
+        {
+            VpnCarriesText = VpnOwnTrafficText = VpnFirewallText = "";
+            ShowSkipUnruled = SkipUnruled = false;
+        }
     }
 
     [RelayCommand]
@@ -108,11 +145,23 @@ public sealed partial class AdapterCardViewModel : ObservableObject
     [RelayCommand]
     private Task MoveDownAsync() => _owner.MoveAsync(this, +1);
 
-    /// <summary>LEO's own probe result in words (VPNs aren't probed; they fall back to Windows' view).</summary>
+    /// <summary>LEO's own probe result in words. VPNs (M6): Connected · internet / private network only / Not connected.</summary>
     public static string HealthText(AdapterInfo info)
     {
+        if (info.Vpn is { } vpn)
+        {
+            if (!vpn.Connected) return info.Status == AdapterStatus.Up ? "Not connected (signed out or idle)" : "Not connected";
+            return info.Health switch
+            {
+                Leo.Core.Networking.HealthState.Up or Leo.Core.Networking.HealthState.Degraded =>
+                    "Connected · internet" + (info.LatencyMs is { } ms ? $" · {ms} ms" : ""),
+                Leo.Core.Networking.HealthState.Unknown => "Connected · checking…",
+                _ => "Connected · private network only",
+            };
+        }
         if (info.Status == AdapterStatus.Connecting) return "Connecting";
         if (info.Status != AdapterStatus.Up) return "Disconnected";
+        if (info.Health == Leo.Core.Networking.HealthState.BlockedByVpn) return "Blocked by a VPN's firewall";
         if (!info.IsPrimaryCandidate)
         {
             return info.Network?.Connectivity switch

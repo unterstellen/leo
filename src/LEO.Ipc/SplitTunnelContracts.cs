@@ -12,6 +12,8 @@ public enum SplitTunnelEngineState
     Error = 3,
     /// <summary>The engine binary isn't installed.</summary>
     NotInstalled = 4,
+    /// <summary>A VPN only allows its own tunnel and blocks LEO's adapter: LEO stopped the engine until it disconnects (M6).</summary>
+    StoodAside = 5,
 }
 
 /// <summary>An app rule plus where its traffic goes right now.</summary>
@@ -34,7 +36,9 @@ public sealed record SplitTunnelInfo(
     string? Message,
     IReadOnlyList<AppRuleInfo> Rules,
     IReadOnlyList<DestinationRuleInfo>? Destinations = null,
-    IReadOnlyList<NetworkDnsInfo>? NetworkDns = null)
+    IReadOnlyList<NetworkDnsInfo>? NetworkDns = null,
+    string? UnruledVia = null,      // M6: the VPN unruled traffic follows right now (display name), null = Primary
+    string? VpnBanner = null)       // M6: "<VPN> blocks traffic outside it…" / "Split tunneling paused by <VPN>…"
 {
     public static SplitTunnelInfo Empty { get; } = new(true, SplitTunnelEngineState.Off, null, [], [], []);
 }

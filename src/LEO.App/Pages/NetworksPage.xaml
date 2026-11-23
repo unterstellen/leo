@@ -75,6 +75,20 @@
                                     <TextBlock Text="{x:Bind PinsText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
                                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" TextTrimming="CharacterEllipsis"
                                                Visibility="{x:Bind PinsText, Mode=OneWay, Converter={StaticResource NotNullToBool}}" />
+                                    <!-- VPN (M6): what it carries, where its own traffic goes, firewall -->
+                                    <TextBlock Text="{x:Bind VpnCarriesText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                               Visibility="{x:Bind VpnCarriesText, Mode=OneWay, Converter={StaticResource NotNullToBool}}" />
+                                    <TextBlock Text="{x:Bind VpnOwnTrafficText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                                               Visibility="{x:Bind VpnOwnTrafficText, Mode=OneWay, Converter={StaticResource NotNullToBool}}" />
+                                    <TextBlock Text="{x:Bind VpnFirewallText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource SystemFillColorCautionBrush}" TextWrapping="Wrap"
+                                               Visibility="{x:Bind VpnFirewallText, Mode=OneWay, Converter={StaticResource NotNullToBool}}" />
+                                    <CheckBox Content="Let unruled traffic skip this VPN" IsChecked="{x:Bind SkipUnruled, Mode=OneWay}"
+                                              Click="SkipUnruled_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
+                                              Visibility="{x:Bind ShowSkipUnruled, Mode=OneWay}"
+                                              ToolTipService.ToolTip="Apps without a rule stay on your Primary network while LEO's rules are active; only rules aimed at this VPN use it." />
                                 </StackPanel>
 
                                 <!-- Actions: their own row under the text, so details never get squeezed -->

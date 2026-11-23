@@ -53,6 +53,9 @@ public sealed class DestinationRule
     /// <summary>Adapter id (interface GUID) the traffic should use.</summary>
     public string TargetAdapterId { get; set; } = "";
 
+    /// <summary>VPN targets only (M6): the VPN's key, so the rule finds the VPN again as a new adapter. null otherwise.</summary>
+    public string? TargetVpnKey { get; set; }
+
     public OnTargetDown OnTargetDown { get; set; } = OnTargetDown.FallbackPrimary;
 
     public bool Enabled { get; set; } = true;

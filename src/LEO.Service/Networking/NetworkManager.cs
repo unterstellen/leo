@@ -44,6 +44,27 @@ public sealed class NetworkManager(
     /// <summary>Ask for a full rescan soon (e.g. after LEO connected a Wi-Fi adapter).</summary>
     public void RequestRescan() => _changeSignal.Release();
 
+    /// <summary>The latest adapter scan (VpnMonitor needs interface indexes, which AdapterInfo doesn't carry).</summary>
+    public IReadOnlyList<ScannedAdapter> LastScan => Volatile.Read(ref _lastScan);
+
+    /// <summary>Latest probe report per physical adapter, before the BlockedByVpn overlay (kill-switch detector input).</summary>
+    public IReadOnlyDictionary<string, HealthReport> RawHealth
+    {
+        get { lock (_health) return new Dictionary<string, HealthReport>(_health, StringComparer.OrdinalIgnoreCase); }
+    }
+
+    private VpnPicture _vpn = VpnPicture.Empty;
+
+    /// <summary>VpnMonitor's latest picture (M6): VPN cards, route targets, BlockedByVpn. Refreshes the snapshot.</summary>
+    public async Task ApplyVpnPictureAsync(VpnPicture picture, CancellationToken ct)
+    {
+        Volatile.Write(ref _vpn, picture);
+        await RefreshAsync(rescan: false, ct);
+    }
+
+    /// <summary>Re-publish after a VPN setting changed (skip-unruled).</summary>
+    public Task RefreshAsync(CancellationToken ct) => RefreshAsync(rescan: false, ct);
+
     // ── API (called from LeoControlTarget) ───────────────────────────────────
 
     public async Task SetPrimaryAsync(string adapterId, CancellationToken ct)
@@ -328,9 +349,21 @@ public sealed class NetworkManager(
                 c.Networks.ToDictionary(n => n.Key, n => n.Nickname, StringComparer.Ordinal),
                 c.Health));
 
-            // Failover: feed health of every candidate, get the demoted set.
+            // Failover: feed health of every candidate, get the demoted set. A VPN kill switch that blocks traffic outside
+            // the VPN turns failing physical networks into BlockedByVpn, which freezes failover (LEO.md §20.4).
+            var vpn = Volatile.Read(ref _vpn);
+            var blocksBypass = vpn.Firewall.Verdict == Leo.Core.Networking.KillSwitchVerdict.BlocksBypass;
             var healthById = scanned.Where(a => a.Kind.IsPrimaryCandidate())
-                .ToDictionary(a => a.Id, a => HealthOf(a, health), StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(a => a.Id, a =>
+                {
+                    var h = HealthOf(a, health);
+                    return blocksBypass && a.Status == AdapterStatus.Up && h.State is HealthState.NoInternet or HealthState.Unknown
+                        ? h with { State = HealthState.BlockedByVpn, Detail = "Blocked by a VPN's firewall" } : h;
+                }, StringComparer.OrdinalIgnoreCase);
+            var vpnSettings = config.Read(c => c.SplitTunnel.Vpns.ToDictionary(v => v.Key, v => v.SkipUnruled, StringComparer.OrdinalIgnoreCase));
+            var skipped = vpn.Vpns.Values.Where(v => vpnSettings.GetValueOrDefault(v.Key)).Select(v => v.AdapterId)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var unruledWinner = VpnRoutes.DefaultWinner(vpn.Vpns.Values.Where(v => v.Connected).Select(v => v.Routes), skipped);
             _failover.Enabled = health.AutoFailover;
             _failover.FailoverDelay = TimeSpan.FromSeconds(Math.Max(1, health.FailoverDelaySeconds));
             _failover.FailbackDelay = TimeSpan.FromSeconds(Math.Max(5, health.FailbackDelaySeconds));
@@ -361,6 +394,27 @@ public sealed class NetworkManager(
                     var (metric, automatic) = metrics[a.Id];
                     var h = healthById.GetValueOrDefault(a.Id);
                     var dual = wifi?.DualLink.GetValueOrDefault(a.Id);
+                    VpnInfo? vpnInfo = null;
+                    var connected = a.Kind != AdapterKind.Vpn || VpnConnection.IsConnected(a.Status == AdapterStatus.Up, a.IPv4);
+                    if (a.Kind == AdapterKind.Vpn)
+                    {
+                        var key = VpnIdentity.KeyOf(a.Description, a.Name);
+                        var st = vpn.Vpns.GetValueOrDefault(a.Id);
+                        var routes = st?.Routes ?? new VpnRouteAnalysis(a.Id, false, false, 0, 0, int.MaxValue);
+                        var probe = st?.Probe;
+                        h = !connected ? new HealthReport(HealthState.Disconnected, null, DateTimeOffset.Now)
+                            : probe ?? new HealthReport(HealthState.Unknown, null, DateTimeOffset.Now);
+                        var own = st?.OwnTrafficAdapterId is { } ownId ? scanned.FirstOrDefault(s => s.Id == ownId) : null;
+                        var ownName = own is null ? null
+                            : adapterSettings.FirstOrDefault(s => s.Id.Equals(own.Id, StringComparison.OrdinalIgnoreCase)).Nickname ?? own.Name;
+                        var firewall = vpn.Firewall.VpnId is { } fw && fw.Equals(a.Id, StringComparison.OrdinalIgnoreCase)
+                            ? (VpnFirewall)(int)vpn.Firewall.Verdict : VpnFirewall.None;
+                        vpnInfo = new VpnInfo(key, connected, probe?.State is HealthState.Up or HealthState.Degraded,
+                            routes.TakesDefault4, routes.TakesDefault6, routes.PublicRanges4 + routes.PublicRanges6, routes.DefaultMetric,
+                            ownName, own is not null, firewall, firewall == VpnFirewall.None ? null : vpn.FirewallOwner,
+                            st?.DnsServers ?? 0, st?.NrptRules ?? 0, vpnSettings.GetValueOrDefault(key),
+                            connected && a.Id.Equals(unruledWinner, StringComparison.OrdinalIgnoreCase));
+                    }
                     return new AdapterInfo(a.Id, a.Name, a.Description, a.Kind, nick, a.Mac, a.Status, a.LinkSpeedBps,
                         a.IPv4, a.IPv6, a.Gateways, a.DnsServers, network, metric, automatic,
                         priority,
@@ -374,7 +428,9 @@ public sealed class NetworkManager(
                         PinnedSsids: settings.Pins ?? [],
                         DualLinkSupported: dual?.Supported ?? false,
                         DualLinkEnabled: dual?.Enabled ?? false,
-                        FollowsAdapterId: dual?.PrimaryId);
+                        FollowsAdapterId: dual?.PrimaryId,
+                        IsRouteTarget: a.Kind.IsRouteTarget(connected),
+                        Vpn: vpnInfo);
                 })
                 .ToList();
 
@@ -526,7 +582,8 @@ public sealed class NetworkManager(
               .Append('|').AppendJoin(',', a.IPv4).Append('|').AppendJoin(',', a.IPv6)
               .Append('|').AppendJoin(',', a.Gateways).Append('|').AppendJoin(',', a.DnsServers)
               .Append('|').AppendJoin(',', a.PinnedSsids)
-              .Append('|').Append(a.DualLinkSupported).Append(a.DualLinkEnabled).Append(a.FollowsAdapterId);
+              .Append('|').Append(a.DualLinkSupported).Append(a.DualLinkEnabled).Append(a.FollowsAdapterId)
+              .Append('|').Append(a.IsRouteTarget).Append('|').Append(a.Vpn);
         }
         return sb.ToString();
     }

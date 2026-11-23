@@ -10,7 +10,18 @@ using Microsoft.UI.Xaml.Media.Imaging;
 namespace Leo.App.ViewModels;
 
 /// <summary>A network an app can be sent through.</summary>
-public sealed record NetworkOption(string Id, string Name, bool IsUp, bool IsPrimary);
+/// <summary>A network a rule may target: physical networks, plus VPNs (M6; <see cref="IsVpn"/>, IsUp = connected).</summary>
+public sealed record NetworkOption(string Id, string Name, bool IsUp, bool IsPrimary, bool IsVpn = false)
+{
+    /// <summary>Menu text: "WiFi (Primary)", "Tailscale · VPN (not connected)".</summary>
+    public string Label => Name + (IsVpn ? " · VPN" : "") + (IsPrimary ? " (Primary)" : "") + (IsUp ? "" : " (not connected)");
+
+    /// <summary>Rule targets for a picker, from the service's snapshot: physical networks by priority, then VPNs.</summary>
+    public static IReadOnlyList<NetworkOption> From(NetworkSnapshot snap) =>
+        snap.Adapters.Where(a => a.IsPrimaryCandidate || a.Vpn is not null)
+            .OrderBy(a => a.Vpn is not null).ThenBy(a => a.PriorityIndex ?? int.MaxValue).ThenBy(a => a.DisplayName)
+            .Select(a => new NetworkOption(a.Id, a.DisplayName, a.Vpn?.Connected ?? a.Status == AdapterStatus.Up, a.IsPrimary, a.Vpn is not null)).ToList();
+}
 
 /// <summary>Apps page: split tunneling by app (LEO.md §6.4, M3). All changes come from explicit user actions.</summary>
 public sealed partial class AppsViewModel : ObservableObject
@@ -39,10 +50,9 @@ public sealed partial class AppsViewModel : ObservableObject
     [ObservableProperty] public partial bool IsEmpty { get; set; } = true;
     [ObservableProperty] public partial string? ErrorText { get; set; }
 
-    public IReadOnlyList<NetworkOption> Networks =>
-        _connection.Networks.Adapters.Where(a => a.IsPrimaryCandidate)
-            .OrderBy(a => a.PriorityIndex ?? int.MaxValue)
-            .Select(a => new NetworkOption(a.Id, a.DisplayName, a.Status == AdapterStatus.Up, a.IsPrimary)).ToList();
+    public IReadOnlyList<NetworkOption> Networks => NetworkOption.From(_connection.Networks);
+
+    [ObservableProperty] public partial string? VpnBanner { get; set; }
 
     public string NetworkName(string adapterId) =>
         _connection.Networks.Adapters.FirstOrDefault(a => a.Id == adapterId)?.DisplayName ?? "Network not connected";
@@ -67,7 +77,8 @@ public sealed partial class AppsViewModel : ObservableObject
             return;
         }
         var nets = Networks;
-        var target = nets.FirstOrDefault(n => n.IsUp && !n.IsPrimary) ?? nets.FirstOrDefault(n => n.IsPrimary) ?? nets.FirstOrDefault();
+        var physical = nets.Where(n => !n.IsVpn).ToList();
+        var target = physical.FirstOrDefault(n => n.IsUp && !n.IsPrimary) ?? physical.FirstOrDefault(n => n.IsPrimary) ?? physical.FirstOrDefault();
         if (target is null)
         {
             ErrorText = "No network is available to send apps through.";
@@ -76,6 +87,15 @@ public sealed partial class AppsViewModel : ObservableObject
         var rule = new AppRule { DisplayName = app.Name, Kind = app.Kind, Pattern = app.Path, TargetAdapterId = target.Id };
         UiLog.Write($"App rule: add '{app.Name}' ({app.Kind}) -> {target.Name}");
         Show(await _connection.TryInvokeAsync(c => c.SaveAppRuleAsync(rule)));
+    }
+
+    /// <summary>Installed VPN clients LEO knows (from the service), as app candidates.</summary>
+    public async Task<List<AppCandidate>> VpnClientsAsync()
+    {
+        IReadOnlyList<VpnClientInfo> list = [];
+        var error = await _connection.TryInvokeAsync(async c => list = await c.GetVpnClientPresetsAsync());
+        if (error is not null) ErrorText = error;
+        return list.Select(v => new AppCandidate(v.Name, v.ExePath, AppMatchKind.ExactPath, "VPN client · " + v.ExePath)).ToList();
     }
 
     public async Task SaveAsync(AppRule rule, string what)
@@ -114,15 +134,18 @@ public sealed partial class AppsViewModel : ObservableObject
             : info.State switch
             {
                 SplitTunnelEngineState.Running => (InfoBarSeverity.Success, "Split tunneling is on",
-                    "Apps below use their chosen network. Everything else uses your Primary network."),
+                    info.UnruledVia is { } via ? $"Apps below use their chosen network. Everything else goes through {via} (that VPN takes all unruled traffic)." : "Apps below use their chosen network. Everything else uses your Primary network."),
                 SplitTunnelEngineState.Starting => (InfoBarSeverity.Informational, "Starting…", "LEO is starting its routing engine."),
                 SplitTunnelEngineState.Error => (InfoBarSeverity.Error, "Split tunneling paused", info.Message ?? "The routing engine stopped."),
                 SplitTunnelEngineState.NotInstalled => (InfoBarSeverity.Error, "Routing engine missing", info.Message ?? "Reinstall LEO."),
+                SplitTunnelEngineState.StoodAside => (InfoBarSeverity.Warning, "Split tunneling paused by a VPN", info.Message ?? "A VPN only allows its own tunnel."),
                 _ when !info.Enabled => (InfoBarSeverity.Informational, "Split tunneling is off",
                     "Your rules are kept, but every app uses the Primary network until you turn it back on."),
                 _ => (InfoBarSeverity.Informational, "No active rules",
                     "Add an app to choose which network it uses. Until then LEO doesn't touch app traffic at all."),
             };
+
+        VpnBanner = connected ? info.VpnBanner : null;
 
         // Update cards in place by id.
         var incoming = info.Rules;
