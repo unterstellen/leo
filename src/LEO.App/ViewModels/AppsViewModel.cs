@@ -41,7 +41,19 @@ public sealed partial class AppsViewModel : ObservableObject
 
     public ObservableCollection<AppRuleCardViewModel> Rules { get; } = [];
 
-    [ObservableProperty] public partial bool CanEdit { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterButtonEnabled))]
+    public partial bool CanEdit { get; set; }
+
+    /// <summary>
+    /// True while an on/off request is being applied (the engine starts or stops). The button is greyed out and
+    /// says "Turning on…/off…", so a quick second click can't send the same request again unnoticed.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterButtonEnabled))]
+    public partial bool MasterBusy { get; set; }
+
+    public bool MasterButtonEnabled => CanEdit && !MasterBusy;
     [ObservableProperty] public partial bool MasterEnabled { get; set; } = true;
     [ObservableProperty] public partial string MasterButtonText { get; set; } = "Turn off";
     [ObservableProperty] public partial string StatusTitle { get; set; } = "";
@@ -61,10 +73,17 @@ public sealed partial class AppsViewModel : ObservableObject
 
     public async Task ToggleMasterAsync()
     {
-        if (!CanEdit) return;
+        if (!CanEdit || MasterBusy) return;
         var enable = !_connection.SplitTunnel.Enabled;
         UiLog.Write($"Split tunneling: switch {(enable ? "on" : "off")}");
-        Show(await _connection.TryInvokeAsync(c => c.SetSplitTunnelEnabledAsync(enable)));
+        MasterBusy = true;
+        MasterButtonText = enable ? "Turning on…" : "Turning off…";
+        try { Show(await _connection.TryInvokeAsync(c => c.SetSplitTunnelEnabledAsync(enable))); }
+        finally
+        {
+            MasterBusy = false;
+            Refresh();
+        }
     }
 
     /// <summary>Creates a rule for a picked app, sending it through the best network that isn't the Primary.</summary>
@@ -127,7 +146,7 @@ public sealed partial class AppsViewModel : ObservableObject
         var connected = _connection.State == ConnectionState.Connected;
         CanEdit = connected && _connection.Access == ClientAccess.Full;
         MasterEnabled = info.Enabled;
-        MasterButtonText = info.Enabled ? "Turn off" : "Turn on";
+        if (!MasterBusy) MasterButtonText = info.Enabled ? "Turn off" : "Turn on";
 
         (StatusSeverity, StatusTitle, StatusText) = !connected
             ? (InfoBarSeverity.Warning, "LEO service not connected", "App rules can't be shown or changed right now.")

@@ -30,7 +30,7 @@
                     </StackPanel>
                 </Button>
                 <Button Content="{x:Bind ViewModel.MasterButtonText, Mode=OneWay}" Click="Master_Click"
-                        IsEnabled="{x:Bind ViewModel.CanEdit, Mode=OneWay}"
+                        IsEnabled="{x:Bind ViewModel.MasterButtonEnabled, Mode=OneWay}"
                         AutomationProperties.Name="{x:Bind ViewModel.MasterButtonText, Mode=OneWay}" />
             </StackPanel>
 

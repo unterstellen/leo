@@ -30,7 +30,19 @@ public sealed partial class DestinationsViewModel : ObservableObject
     public ObservableCollection<DestinationCardViewModel> Rules { get; } = [];
     public ObservableCollection<NetworkDnsCardViewModel> Dns { get; } = [];
 
-    [ObservableProperty] public partial bool CanEdit { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterButtonEnabled))]
+    public partial bool CanEdit { get; set; }
+
+    /// <summary>
+    /// True while an on/off request is being applied (the engine starts or stops). The button is greyed out and
+    /// says "Turning on…/off…", so a quick second click can't send the same request again unnoticed.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterButtonEnabled))]
+    public partial bool MasterBusy { get; set; }
+
+    public bool MasterButtonEnabled => CanEdit && !MasterBusy;
     [ObservableProperty] public partial bool IsConnected { get; set; }
     [ObservableProperty] public partial string MasterButtonText { get; set; } = "Turn off";
     [ObservableProperty] public partial string StatusTitle { get; set; } = "";
@@ -61,10 +73,17 @@ public sealed partial class DestinationsViewModel : ObservableObject
 
     public async Task ToggleMasterAsync()
     {
-        if (!CanEdit) return;
+        if (!CanEdit || MasterBusy) return;
         var enable = !_connection.SplitTunnel.Enabled;
         UiLog.Write($"Split tunneling: switch {(enable ? "on" : "off")} (URLs & IPs page)");
-        Show(await _connection.TryInvokeAsync(c => c.SetSplitTunnelEnabledAsync(enable)));
+        MasterBusy = true;
+        MasterButtonText = enable ? "Turning on…" : "Turning off…";
+        try { Show(await _connection.TryInvokeAsync(c => c.SetSplitTunnelEnabledAsync(enable))); }
+        finally
+        {
+            MasterBusy = false;
+            Refresh();
+        }
     }
 
     /// <summary>Default network for a new rule: the best connected network that isn't the Primary.</summary>
@@ -149,7 +168,7 @@ public sealed partial class DestinationsViewModel : ObservableObject
         var info = _connection.SplitTunnel;
         IsConnected = _connection.State == ConnectionState.Connected;
         CanEdit = IsConnected && _connection.Access == ClientAccess.Full;
-        MasterButtonText = info.Enabled ? "Turn off" : "Turn on";
+        if (!MasterBusy) MasterButtonText = info.Enabled ? "Turn off" : "Turn on";
         var dests = info.Destinations ?? [];
 
         (StatusSeverity, StatusTitle, StatusText) = !IsConnected
