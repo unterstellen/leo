@@ -11,7 +11,8 @@ namespace Leo.Service;
 public sealed class ControlPipeServer(
     EngineStatusProvider status, NetworkManager networks, ILoggerFactory loggers,
     Leo.Service.Wifi.WifiManager? wifi = null, NotificationHub? hub = null,
-    Leo.Service.SplitTunnel.SplitTunnelManager? splitTunnel = null) : BackgroundService
+    Leo.Service.SplitTunnel.SplitTunnelManager? splitTunnel = null,
+    Leo.Service.Profiles.ProfileManager? profiles = null, Leo.Service.Stats.StatsCollector? stats = null) : BackgroundService
 {
     private readonly ILogger _log = loggers.CreateLogger<ControlPipeServer>();
 
@@ -68,7 +69,7 @@ public sealed class ControlPipeServer(
 
         // TODO(M8): reject clients whose image is not Authenticode-signed by INFERSTELLEN/UNTERSTELLEN.
 
-        using var target = new LeoControlTarget(status, networks, client, loggers.CreateLogger<LeoControlTarget>(), wifi, hub, splitTunnel);
+        using var target = new LeoControlTarget(status, networks, client, loggers.CreateLogger<LeoControlTarget>(), wifi, hub, splitTunnel, profiles, stats);
         using var rpc = PipeTransport.CreateRpc(pipe);
         // Surface protocol-level failures (they otherwise vanish inside StreamJsonRpc).
         rpc.TraceSource.Switch.Level = System.Diagnostics.SourceLevels.Warning;

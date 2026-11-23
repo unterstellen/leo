@@ -56,6 +56,17 @@ public sealed class ServiceConnection : IAsyncDisposable
         SplitTunnelChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public ProfilesInfo Profiles { get; private set; } = ProfilesInfo.Empty;
+
+    /// <summary>Profiles, the active profile or its reason changed.</summary>
+    public event EventHandler? ProfilesChanged;
+
+    private void SetProfiles(ProfilesInfo info)
+    {
+        Profiles = info;
+        ProfilesChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>
     /// Runs a command against the service. Returns null on success, or a user-facing error message.
     /// </summary>
@@ -114,10 +125,12 @@ public sealed class ServiceConnection : IAsyncDisposable
                 control.NetworksChanged += (_, n) => SetNetworks(n);
                 control.NotificationRaised += (_, n) => Notified?.Invoke(this, n);
                 control.SplitTunnelChanged += (_, s) => SetSplitTunnel(s);
+                control.ProfilesChanged += (_, p) => SetProfiles(p);
 
                 SetState(ConnectionState.Connected, await control.GetStatusAsync(ct), control);
                 SetNetworks(await control.GetNetworksAsync(ct));
                 SetSplitTunnel(await control.GetSplitTunnelAsync(ct));
+                SetProfiles(await control.GetProfilesAsync(ct));
 
                 await rpc.Completion.WaitAsync(ct);
             }
@@ -136,6 +149,7 @@ public sealed class ServiceConnection : IAsyncDisposable
             SetState(ConnectionState.ServiceUnavailable, null, null);
             SetNetworks(NetworkSnapshot.Empty);
             SetSplitTunnel(SplitTunnelInfo.Empty);
+            SetProfiles(ProfilesInfo.Empty);
             try { await Task.Delay(RetryDelay, ct); } catch (OperationCanceledException) { break; }
         }
     }

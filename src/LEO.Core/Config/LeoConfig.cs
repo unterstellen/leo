@@ -3,7 +3,8 @@ namespace Leo.Core.Config;
 /// <summary>Machine configuration persisted at %ProgramData%\UNTERSTELLEN\LEO\config.json (LEO.md §8).</summary>
 public sealed class LeoConfig
 {
-    public int SchemaVersion { get; set; } = 1;
+    /// <summary>1 = M0–M4; 2 = profiles (M5, LEO.md §19). Older files are upgraded by <see cref="ConfigMigration"/>.</summary>
+    public int SchemaVersion { get; set; } = ConfigMigration.CurrentSchema;
 
     /// <summary>Per-adapter settings, keyed by interface GUID (with MAC as a fallback match).</summary>
     public List<AdapterSettings> Adapters { get; set; } = [];
@@ -22,6 +23,14 @@ public sealed class LeoConfig
 
     /// <summary>Split tunneling: which app uses which network (LEO.md §6.4, M3).</summary>
     public Leo.Core.SplitTunnel.SplitTunnelSettings SplitTunnel { get; set; } = new();
+
+    /// <summary>
+    /// Profiles (M5). The active one's settings are the top-level fields above; the others keep a stored copy.
+    /// "Default" always exists and is used when no other profile's trigger matches.
+    /// </summary>
+    public List<Leo.Core.Profiles.Profile> Profiles { get; set; } = [];
+
+    public Leo.Core.Profiles.ProfileState ProfileState { get; set; } = new();
 }
 
 public sealed class AdapterSettings

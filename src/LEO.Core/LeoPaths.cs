@@ -14,6 +14,7 @@ public static class LeoPaths
         LeoInfo.Publisher, LeoInfo.ProductName);
 
     public static string ConfigFile => Path.Combine(MachineData, "config.json");
+    public static string StatsDb => Path.Combine(MachineData, "stats.db");
     public static string MachineLogs => Path.Combine(MachineData, "logs");
     public static string UserLogs => Path.Combine(UserData, "logs");
 }

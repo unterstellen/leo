@@ -144,7 +144,8 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 
 ### 5.4 DNS
 - LEO runs a DNS resolver on the TUN interface. Windows' DNS points at it.
-- **Fake-IP mode** (default): domains get answers from `198.18.0.0/15` (and an IPv6 ULA range). LEO keeps the fake IP → domain map, so domain rules match exactly. The real lookup happens **through the target network** using that network's DNS.
+- *(As built in M4: **redir-host** instead of fake-IP, so cached answers survive an engine stop; see §18.)*
+- **Fake-IP mode** (original plan): domains get answers from `198.18.0.0/15` (and an IPv6 ULA range). LEO keeps the fake IP → domain map, so domain rules match exactly. The real lookup happens **through the target network** using that network's DNS.
 - **Per-network DNS**: each network can use its DHCP-provided DNS, custom DNS servers, or DoH/DoT.
 - Leak protection: plain DNS (port 53) to other servers is caught and answered by LEO.
 - Limits: browsers with Secure DNS / ECH may hide the domain. SNI sniffing covers most cases, and ECH-only connections fall back to IP rules or the app rule. Shown in the UI as "domain unknown".
@@ -253,7 +254,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 
 ## 8. Data & Storage
 - Config: `%ProgramData%\UNTERSTELLEN\LEO\config.json`, ACL'd so only SYSTEM and Administrators can write.
-- Stats DB: `%ProgramData%\UNTERSTELLEN\LEO\stats.db` (SQLite).
+- Stats DB: `%ProgramData%\UNTERSTELLEN\LEO\stats.db` (SQLite through Windows' own `winsqlite3.dll`). Daily byte totals only; never connections or destinations (§19).
 - Logs: `%ProgramData%\UNTERSTELLEN\LEO\logs\` (rolling, 7 days).
 - UI preferences: `%LocalAppData%\UNTERSTELLEN\LEO\`.
 - **No telemetry. No accounts.** LEO's only network calls of its own are the update check to `api.github.com` (unterstellen/leo-windows releases) and the internet health probes (§5.7).
@@ -306,8 +307,8 @@ leo-windows/
 | **M1** | Inventory + Primary + Nicknames | All adapters listed live; rename; one-click Primary via metrics; tray quick menu |
 | **M2** | Health + Failover + Wi-Fi mgmt | Per-interface probes; auto failover/failback; SSID pinning per adapter; toasts |
 | **M3** | TUN engine + App rules (**built**, §17) | Wintun up; all traffic goes through the engine; per-app routing works for TCP/UDP; safe restore if it crashes |
-| **M4** | Destination rules + DNS | Fake-IP DNS, SNI sniffing, domain/CIDR/port rules, per-network DNS, precedence, "test a rule" |
-| **M5** | Profiles + Stats | Profiles with triggers; per-adapter/per-app stats; connections view |
+| **M4** | Destination rules + DNS (**built**, §18) | Engine DNS (redir-host instead of fake-IP, §18), SNI sniffing, domain/CIDR/port rules, per-network DNS, precedence, "test a rule" |
+| **M5** | Profiles + Stats (**built**, §19) | Profiles with triggers; per-adapter/per-app stats; connections view |
 | **M6** | VPN coexistence | VPN as underlay + as target + bypass; kill-switch detection |
 | **M7** | Bonding | Bond groups, balancing modes, sticky sessions |
 | **M8** | Ship | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
@@ -470,3 +471,74 @@ Rules regardless of option: release builds are made and signed in GitHub Actions
 - Privacy: the engine logs at warning level and LEO drops every per-connection line (app + address) before writing its own log.
 - Verified with two working networks (WiFi = Primary, phone USB tether = Ethernet, rule `curl.exe` → Ethernet): a 3 MB curl download arrived entirely on Ethernet (+2.98 MB, WiFi +0.00) while unruled apps stayed on WiFi; the engine didn't reduce WiFi throughput (same 3 MB download with the engine on and off).
 - Verified failover with the rule active: unplugging the tether → LEO marked Ethernet "no internet" and within ~1 s re-pointed the rule's group to Primary ("Now: WiFi (fallback: Ethernet is unavailable)"); curl kept working over WiFi without restarting anything.
+
+---
+
+## 18. M4 decisions: destination rules + DNS (2026-11-23)
+
+**Decisions:**
+- **Precedence** (implements §2/§6.5): **App + destination > destination > app > Primary.** Among destination rules: exact host name > domain with subdomains (more labels first) > keyword > IP range (narrower first) > "any destination" (ports only); a rule with a port/protocol filter beats the same rule without one; then the user's order (move up/down on the card). One pure function (`DestinationMatcher.Ordered`) decides the order for both the engine config and "test a rule", so they can't disagree.
+- **DNS: redir-host, not fake-IP.** The engine answers DNS with *real* addresses and remembers address→name, so domain rules still match exactly. Reason: with fake-IP, answers cached by Windows/apps point at addresses that stop working the moment the engine stops or crashes, which breaks §5.9 ("never brick the network"). With redir-host, stopping the engine leaves every cached answer valid.
+- **Sniffing**: TLS SNI, HTTP Host and QUIC (ports 80/8080-8880, 443/8443) are read while any domain rule is active, so domain rules work for apps with their own DNS (DoH) or cached addresses. `override-destination: false`: the connection still goes to the address the app chose; the name is only used for matching.
+- **Per-network DNS**: each network uses its own (DHCP) DNS servers, or the user's custom list (IPs, `https://` DoH, `tls://` DoT; up to 4). Every engine lookup is **bound to a network**: by default through the Primary to the Primary's DNS; for domains with a rule, through the target network to *its* DNS (`nameserver-policy`), so a CDN answer fits the network the traffic really uses. A target that is down gets no policy entry (its traffic falls back to Primary or is blocked, and so does its DNS). A network reporting no DNS falls back to 1.1.1.1/8.8.8.8 through that network.
+- **How Windows' DNS reaches the engine**: the engine's tunnel adapter gets DNS server 198.18.0.2 and `dns-hijack: any:53` answers it (and any plain DNS an app sends to a public server through the tunnel). DNS to the router itself (192.168.x.x) is a local address, so it bypasses the tunnel; Windows prefers the tunnel's DNS, and sniffing covers the rest.
+- **Rule syntax** in the engine: `DOMAIN`, `DOMAIN-SUFFIX`, `DOMAIN-KEYWORD`, `IP-CIDR(6) … no-resolve`, `DST-PORT` (`80/443/8000-8100`), `NETWORK`, combined with `AND,((…),(…))`; combos add the app's `PROCESS-PATH-REGEX` (literal parentheses written `\x28`/`\x29` because the logic parser pairs raw brackets). Destination rules are inline in `rules:` (before the app rule lists), so editing one reloads the engine config; app rules and failover stay live. A primary change now also reloads (its DNS servers change).
+- **Validation**: domains are cleaned up (pasted URLs, `*.`, IDN → punycode), IP ranges are normalised (`203.0.113.77/24` → `203.0.113.0/24`); private/local ranges are refused (they never enter the tunnel); **IPv6 ranges are refused for now** because the engine runs with IPv6 off (rules would silently never match).
+- **Privacy**: the service logs a destination rule's id and kind, never the domain/address; engine lines about DNS, lookups and sniffing are dropped like per-connection lines (§17). The UI log records rule ids only.
+- **Combos keep their app**: deleting an app rule doesn't widen its combos to every app; they show "Not active (its app rule was removed)".
+
+**As built:**
+- Core: `DestinationRule` (+ `NetworkDnsSetting`) in `SplitTunnelSettings`; `DestinationMatcher` (normalise/validate, match, precedence, `Decide`, engine rule lines, URL/host:port parsing); `EnginePlan` emits destination rules, the `dns:` section (redir-host, bound nameservers, policy) and `sniffer:`.
+- Service: `SplitTunnelManager` saves/deletes/moves destination rules, sets per-network DNS, answers "test a rule" (one DNS lookup to check IP ranges), and runs the engine when either app or destination rules are active. IPC protocol 7: `SaveDestinationRuleAsync`, `DeleteDestinationRuleAsync`, `MoveDestinationRuleAsync`, `SetNetworkDnsAsync`, `TestRouteAsync`; `SplitTunnelInfo` carries `Destinations` and `NetworkDns`.
+- UI: **URLs & IPs** page: Add destination dialog (match type, address, ports, protocol, "From" app for combos, network, if unavailable, name; validated before it closes), rule cards (network, fallback, active, edit, move up/down, remove, "Now:" route, match rank), "Test a rule" (address + optional app → rule, network and why), "DNS per network" cards.
+- Tests: matcher/normalisation, precedence, `Decide` (combos, app fallback), engine rule lines, DNS plan, and a test that runs the real engine's config check (`mihomo -t`) on a config with every rule kind (skipped where `artifacts\engine` is absent, e.g. CI).
+
+**Verified live on the dev PC (2026-11-23, WiFi = Primary, phone USB tether = Ethernet, both behind one public IP, so checked by adapter byte counters):**
+- Rule `speed.cloudflare.com → Ethernet` (added and edited through the URLs & IPs page): two 5 MB downloads from it arrived **entirely on Ethernet** (+4.96 MB each, WiFi +0.00); unruled downloads from proof.ovh.net (10 MB and 100 MB) arrived **entirely on WiFi** (+10.71 / +103.68 MB, Ethernet +0.00).
+- Combined rule `141.95.207.0/24 · port 443 → Ethernet` (typed as an IP in the address box, detected as an IP range): a 10 MB HTTPS download from proof.ovh.net went over Ethernet (+10.39 MB, WiFi +0.01). Engine line: `AND,((IP-CIDR,141.95.207.0/24,no-resolve),(DST-PORT,443)),…`.
+- The engine's connection list showed the domain both from its DNS mapping and from SNI (`host`/`sniffHost` = example.com, rule `DomainSuffix`).
+- DNS: the tunnel adapter got DNS 198.18.0.2, Windows lookups went through the engine (≈ 90 ms uncached), and the ruled domain's DNS went to the tether's own DNS server bound to Ethernet (`'+.speed.cloudflare.com': '10.234.251.166#net-…'`). The service log contains rule ids only, no domains.
+- "Test a rule": `https://www.example.com/page` → "Rule: example.com and its subdomains · Uses: WiFi"; `proof.ovh.net` → "Rule: 141.95.207.0/24 · port 443 · Uses: Ethernet · proof.ovh.net resolves to 141.95.207.211, which is in 141.95.207.0/24. Port 443 assumed."
+- Plugging the tether in reloaded the engine with both networks without user action; removing the last rule stopped the engine, removed its adapter and left normal networking.
+- Not exercised live in M4: a destination rule's fallback/block when its network fails (same select-group mechanism as app rules, verified in M3), QUIC sniffing, and DoH/DoT custom servers (covered by the engine's config check only).
+
+---
+
+## 19. M5 decisions: profiles + stats (2026-11-23)
+
+**Decisions (profiles):**
+- **What a profile holds** (§3): priority list, app rules, destination rules, per-network DNS, Wi-Fi pins. **Machine-wide, not per profile:** nicknames, health/failover settings, dual link, the split-tunneling master switch (the tray's "pause" stays one switch).
+- **Storage: the active profile is live.** The top-level config fields (`priorityOrder`, `splitTunnel.*Rules`, `splitTunnel.networkDns`, `adapters[].pinnedSsids`) always hold the *active* profile's settings, so every existing manager and page keeps working unchanged and edits on the Networks / Apps / URLs & IPs pages belong to the active profile. Inactive profiles keep a stored copy (`profiles[].settings`). A switch is one atomic config save: store the live settings in the outgoing profile, put the target's live (`ProfileOps.Switch`). Pins are matched by adapter GUID, then MAC (USB re-plugs).
+- **Migration (schema 1 → 2):** the existing settings become the active **Default** profile, untouched; the old file is kept once as `config.json.v1.bak`. Invariants are repaired on every load (Default exists and is listed last, unique ids, the active profile exists).
+- **Default** always exists, can't be deleted, has no triggers, and is used whenever no other profile's trigger matches.
+- **Triggers:** a Wi-Fi network is connected (any adapter; SSID exact, case-sensitive), a Wi-Fi network is in range (Windows' cached scan lists, read every 15 s only while such a trigger exists; LEO never starts scans for it), an adapter is plugged in and connected (GUID, MAC fallback). No triggers = manual only. Any one trigger of a profile is enough.
+- **Precedence:** the first profile in the user's list whose trigger matches wins (move up/down on the card); Default is always last. Chosen over "most specific trigger wins" because it is predictable and visible.
+- **Hysteresis (`ProfileSwitcher`):** a new choice must hold **5 s** before LEO switches; when the active profile's own triggers stop matching LEO waits **20 s** (re-plugs, Wi-Fi blips); at least **30 s** between two automatic switches; **4 automatic switches within 10 minutes pause automatic switching** (with a notification; "Back to automatic" resumes). The pause catches loops such as a profile whose pins move Wi-Fi away from the network that triggered it.
+- **Manual vs automatic:** a profile picked by hand (Profiles page or tray) holds **until the automatic choice changes** from what it was at the moment of the pick (e.g. the tether gets plugged in); then automatic switching takes over again. Picking what the triggers would pick anyway counts as automatic. "Back to automatic" switches to the triggers' choice at once. Automatic switching can be turned off entirely. The manual flag survives a restart.
+- **Wi-Fi safety:** a switch only rewrites pins in config. Wi-Fi profiles are never created, copied or deleted by a switch, and pin enforcement keeps its M2 rules (no copying on automatic reconnects; a user's Disconnect hold is respected). A network the user forgets in Windows is removed from the live pins **and from every stored profile**, so no profile can bring it back.
+- **Notifications:** every automatic switch ("LEO switched to Phone: Ethernet is connected."), and the flap pause.
+- **Privacy:** profile names and SSIDs are the user's own labels; the service log records profile ids and trigger kinds only.
+
+**Decisions (stats):**
+- **Per adapter:** Windows' own interface byte counters (the ones `Get-NetAdapterStatistics` shows), sampled every 2 s → throughput (5-minute graph), **session** (since the adapter last connected), **today**, **this month**. A counter reset (re-plug) counts from zero. Unplugged adapters used this month stay listed.
+- **Latency/loss history:** one point per existing internet check (no extra probes), last hour, in memory; failed checks shown as a percentage.
+- **Per app per network:** deltas of the engine's per-connection byte counters (mihomo `/connections`, polled every 2 s), attributed to the program's file name and to the adapter whose outbound really carried the connection (fallbacks included, blocked bytes excluded). Only while the engine runs (at least one active rule), which the UI says. Local-network traffic bypasses the engine and isn't counted per app.
+- **What is stored (stats.db):** only **daily byte totals** per adapter/network and per app (file name, e.g. `chrome.exe`) per network. **Never** connections, destinations, domains, addresses, ports, or anything finer than a day. A test pins the exact table/column list. **Retention:** adapter totals 400 days (13 months), app totals 90 days, pruned daily; "Clear statistics" deletes everything.
+- **Live connections view** (app → destination → network → rule): fetched from the engine on demand while the Stats page is open, kept in memory only, never logged or saved. The rule shown comes from the same precedence function as the engine config (`DestinationMatcher.Decide`), plus "started by" for child programs and "No rule (Primary)" for the engine's `MATCH`. **Administrators only**, because it shows what every user's apps connect to; standard users see stats without connections.
+- **SQLite:** through **`winsqlite3.dll`, the SQLite that ships with Windows 10/11** (System32), via a small P/Invoke wrapper. No NuGet package, no bundled native binary, nothing downloaded; SQLite is public domain, which fits GPL-3.0-or-later. If the database can't be opened, stats stay in memory and the service keeps running.
+- **IPC protocol 8:** `GetProfilesAsync`, `SaveProfileAsync`, `DeleteProfileAsync`, `MoveProfileAsync`, `ActivateProfileAsync` (null = back to automatic), `SetProfileAutoSwitchAsync`, `ProfilesChanged` (`ProfilesInfo`: profiles, active one, manual/paused, "active because…", pending countdown); `GetStatsAsync`, `GetConnectionsAsync`, `ClearStatsAsync`; notification kind `ProfileSwitched`. Stats are polled by the open page instead of pushed, so nothing flows when nobody looks.
+
+**As built:**
+- Core: `Profiles/Profile.cs` (model, triggers, state), `ProfileOps` (capture/apply/switch/forget), `ProfileSelector` + `ProfileSwitcher` (pure, time injected), `Config/ConfigMigration`; `Stats/StatsMath.cs` (counter deltas, retention, ring buffer, connection deltas, `ConnectionDescriber`).
+- Service: `Profiles/ProfileManager` (evaluates on network changes, every second while a switch is pending; applies through config and nudges NetworkManager, SplitTunnelManager, WifiManager), `Stats/StatsCollector`, `Stats/StatsStore`, `Stats/Sqlite.cs`; `MihomoEngine.GetConnectionsAsync`.
+- UI: **Profiles** page (active profile + reason + countdown, Back to automatic, automatic switching on/off; cards with triggers, contents and priority; Switch to / Edit / move / Delete; add/edit dialog with a trigger editor and "start with a copy / with no rules"); **tray** profile switcher (Automatic + every profile); **Stats** page (per-network cards with throughput graph, session/today/month and latency graph; per-app per-network table; live connections with filter and pause; privacy note and Clear statistics).
+- Tests (41 new, 166 total): migration (v1 file → Default + backup, repairs), selector precedence and MAC fallback, switcher delays/blips/dwell/manual hold/restart/flap pause, switch round-trips and pin matching, forget-everywhere, ProfileManager create/activate/delete/validation/order, counter deltas/resets/sessions, latency history, connection deltas and attribution, engine JSON parsing, stats.db upsert/retention/clear and its privacy schema.
+
+**Verified live on the dev PC (2026-11-23, WiFi = Primary, phone USB tether = Ethernet):**
+- Deploying migrated the real config.json to schema 2 (backup `config.json.v1.bak`); pins, priority and the empty rule lists were kept as Default.
+- Profile **Phone** created on the Profiles page with the trigger "Ethernet is plugged in and connected" while the tether was plugged in: the page showed "Switching to Phone in 4 s (Ethernet is connected)", then "Active profile: Phone · Automatic: Ethernet is connected", with a notification.
+- With Phone active, the rule `speed.cloudflare.com → Ethernet` added on the URLs & IPs page went into Phone only (Default still 0 rules). A 20 MB download arrived **entirely on Ethernet** (+20.78 MB, WiFi +0.01).
+- Stats: the Ethernet card's totals moved by **exactly** the adapter counter's delta for a 20 MB download (+20.79 MB in Stats and in `Get-NetAdapterStatistics`). The Apps table showed `curl.exe · Ethernet` with its live rate and totals; Live connections showed `curl.exe → speed.cloudflare.com:443 · TCP → Ethernet → speed.cloudflare.com and its subdomains`, other apps "No rule (Primary)" on WiFi.
+- **Unplug/replug:** tether unplugged 10:35:39 (the engine re-pointed Phone's rule to Primary right away) → **10:35:59 automatic switch to Default** (the 20 s hold), notification, engine stopped (Default has no rules). Tether back with internet 10:36:18 → **10:36:29 switch to Phone** (notification), engine started with the rule. A short dropout at 10:36:54 didn't flip the profile. After that, a 10 MB download from the ruled domain went over Ethernet again (+10.39 MB, WiFi +0.00).
+- A wording fix from the live run (reasons keep the adapter's capital letter: "Ethernet is connected") was redeployed; after the service restart Phone was still active ("Automatic: Ethernet is connected"), and today's totals on the Stats page survived the restart.
+- Privacy: stats.db and its WAL contain no destination names; the service log has profile ids and trigger kinds only (the only host names in it are LEO's own probe targets).

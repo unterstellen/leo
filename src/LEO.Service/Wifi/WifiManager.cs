@@ -143,6 +143,27 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
         }, ct);
     }
 
+    /// <summary>Re-check pins now (after a profile switch changed them in config).</summary>
+    public void Wake() => _wake.Release(); // backoffs and a user's Disconnect hold stay in force
+
+    /// <summary>
+    /// SSIDs in the latest scan results of any Wi-Fi adapter (Windows' cached lists; no new scan is started).
+    /// For "Wi-Fi in range" profile triggers.
+    /// </summary>
+    public Task<IReadOnlySet<string>> GetVisibleSsidsAsync(CancellationToken ct) => WithWlan(w =>
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var i in w.GetInterfaces())
+        {
+            try
+            {
+                foreach (var n in VisibleFor(w, i.Id)) if (!string.IsNullOrEmpty(n.Ssid)) set.Add(n.Ssid);
+            }
+            catch (Exception) { /* radio off / interface going away */ }
+        }
+        return (IReadOnlySet<string>)set;
+    }, ct);
+
     public async Task SetPinsAsync(string adapterId, IReadOnlyList<string> ssids, string? mac, CancellationToken ct)
     {
         ParseId(adapterId);
@@ -268,12 +289,8 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
             return count;
         }, ct);
 
-        config.Update(c =>
-        {
-            var changed = false;
-            foreach (var a in c.Adapters) changed |= a.PinnedSsids.RemoveAll(forgotten.Contains) > 0;
-            return changed;
-        });
+        // Live pins and every profile's stored pins (M5): a forgotten network never comes back through a profile.
+        config.Update(c => Leo.Core.Profiles.ProfileOps.RemoveForgottenSsids(c, forgotten));
 
         foreach (var ssid in forgotten)
         {
