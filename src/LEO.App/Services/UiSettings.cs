@@ -11,6 +11,12 @@ public sealed class UiSettings
 
     public bool ShowNotifications { get; set; } = true;
 
+    /// <summary>
+    /// The user's "Start LEO at login" choice; null = never chosen, which means on (LEO.md §6.11): the app then
+    /// registers itself on first launch, like other tray apps.
+    /// </summary>
+    public bool? StartAtLogin { get; set; }
+
     public static UiSettings Load()
     {
         try

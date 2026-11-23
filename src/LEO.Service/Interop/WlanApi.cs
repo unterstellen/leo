@@ -170,6 +170,24 @@ internal sealed class WlanApi : IDisposable
         }
     }
 
+    /// <summary>Connected SSID (null when not connected) and how Windows made the connection (Auto = on its own).</summary>
+    public (string? Ssid, Leo.Core.Networking.WifiConnectionMode Mode) GetConnection(Guid iface)
+    {
+        var rc = WlanQueryInterface(_handle, ref iface, 7, IntPtr.Zero, out _, out var data, out _);
+        if (rc != 0) return (null, Leo.Core.Networking.WifiConnectionMode.Unknown);
+        try
+        {
+            if (Marshal.ReadInt32(data) != StateConnected) return (null, Leo.Core.Networking.WifiConnectionMode.Unknown);
+            var mode = Marshal.ReadInt32(data + 4);
+            return (ReadSsid(data + 520), Enum.IsDefined(typeof(Leo.Core.Networking.WifiConnectionMode), mode)
+                ? (Leo.Core.Networking.WifiConnectionMode)mode : Leo.Core.Networking.WifiConnectionMode.Unknown);
+        }
+        finally
+        {
+            WlanFreeMemory(data);
+        }
+    }
+
     public IReadOnlyList<string> GetProfileNames(Guid iface)
     {
         if (WlanGetProfileList(_handle, ref iface, IntPtr.Zero, out var list) != 0) return [];

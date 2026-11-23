@@ -1,3 +1,4 @@
+using Leo.Core.Networking;
 using Leo.Core.Config;
 using Leo.Ipc;
 using Leo.Service.Interop;
@@ -23,6 +24,11 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
     private readonly HashSet<string> _passwordWarned = [];
     private readonly HashSet<Guid> _radioOff = [];
     private readonly HashSet<string> _forgottenWarned = [];
+    private readonly Dictionary<Guid, string> _leoReconnected = []; // SSID of LEO's own last automatic reconnect
+    private readonly Dictionary<Guid, string> _held = [];           // non-Primary adapter left on the user's choice
+
+    /// <summary>Current Primary (from NetworkManager): a manual Wi-Fi switch on it becomes its new pin.</summary>
+    public string? PrimaryAdapterId { get; set; }
     private readonly ForgetTracker _forgets = new();
     private WlanApi? _wlan;
 
@@ -187,6 +193,7 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
         var iface = ParseId(adapterId);
         if (userInitiated)
         {
+            lock (_leoReconnected) _leoReconnected.Remove(iface); // what follows is the user's choice
             // A manual connect is in progress: keep the pin check from starting a second, competing connect.
             lock (_nextAttempt) _nextAttempt[iface] = DateTimeOffset.Now + RetryBackoff;
         }
@@ -328,8 +335,31 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
         {
             if (!Guid.TryParse(id, out var iface) || interfaces.All(i => i.Id != iface)) continue; // adapter absent
 
-            var connected = await WithWlan(w => w.GetConnectedSsid(iface), ct);
-            if (connected is not null && pins.Contains(connected)) continue; // on a pinned network: nothing to do
+            // A network the user picked (Windows' Wi-Fi menu or LEO's Connect) is never overridden; only drops and
+            // Windows' own automatic moves are corrected (WifiPinPolicy, LEO.md §19.1).
+            var (connected, mode) = await WithWlan(w => w.GetConnection(iface), ct);
+            string? ownReconnect;
+            lock (_leoReconnected) _leoReconnected.TryGetValue(iface, out ownReconnect);
+            var isPrimary = string.Equals(PrimaryAdapterId, id, StringComparison.OrdinalIgnoreCase);
+            var action = WifiPinPolicy.Decide(connected, mode, pins, isPrimary, ownReconnect);
+            if (action != PinAction.Hold) _held.Remove(iface);
+            if (action == PinAction.Nothing) continue;
+            if (action == PinAction.AdoptAsPin)
+            {
+                AdoptManualChoice(id, iface, nickname, connected!, pins);
+                continue;
+            }
+            if (action == PinAction.Hold)
+            {
+                if (!_held.TryGetValue(iface, out var heldOn) || heldOn != connected)
+                {
+                    _held[iface] = connected!;
+                    log.LogInformation("{Adapter}: the user picked '{Ssid}' in Windows; leaving it there (pins kept for when it drops)", id, connected);
+                    notifications.Publish(NotificationKind.WifiReconnected, "LEO left your Wi-Fi choice alone",
+                        $"You picked '{connected}' on {AdapterName(iface, nickname)}, so LEO leaves it there. It goes back to '{pins[0]}' only if this connection drops.", id);
+                }
+                continue;
+            }
 
             var now = DateTimeOffset.Now;
             lock (_nextAttempt)
@@ -363,6 +393,7 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
             try
             {
                 await ConnectAsync(id, target, password: null, ct, userInitiated: false);
+                lock (_leoReconnected) _leoReconnected[iface] = target;
                 _forgottenWarned.Remove($"{id}|{target}");
                 // Nickname, else the Windows adapter name ("WiFi"), never the long driver description.
                 var name = nickname
@@ -395,6 +426,30 @@ public sealed class WifiManager(ConfigStore config, NotificationHub notification
             }
         }
     }
+
+    /// <summary>The user switched the Primary Wi-Fi to another network: it becomes the first pinned network.</summary>
+    private void AdoptManualChoice(string id, Guid iface, string? nickname, string ssid, IReadOnlyList<string> pins)
+    {
+        var updated = WifiPinPolicy.Adopt(pins, ssid).Take(10).ToList();
+        config.Update(c =>
+        {
+            var entry = c.Adapters.FirstOrDefault(a => a.Id.Equals(id, StringComparison.OrdinalIgnoreCase));
+            if (entry is null || entry.PinnedSsids.SequenceEqual(updated)) return false;
+            entry.PinnedSsids = updated;
+            return true;
+        });
+        log.LogInformation("{Adapter}: the user picked '{Ssid}' in Windows on the Primary Wi-Fi; it is now the first pinned network [{Pins}]",
+            id, ssid, string.Join(", ", updated));
+        var backups = updated.Skip(1).ToList();
+        notifications.Publish(NotificationKind.WifiReconnected, $"Wi-Fi stays on '{ssid}'",
+            $"You picked '{ssid}' on {AdapterName(iface, nickname)}, so LEO keeps it there from now on"
+            + (backups.Count > 0 ? $" ('{string.Join("', '", backups)}' stays as a backup)." : "."), id);
+        ConnectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static string AdapterName(Guid iface, string? nickname) =>
+        nickname ?? System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .FirstOrDefault(n => Guid.TryParse(n.Id, out var g) && g == iface)?.Name ?? "Wi-Fi";
 
     // ── Profiles ─────────────────────────────────────────────────────────────
 

@@ -12,18 +12,15 @@ namespace Leo.App.ViewModels;
 /// Every action goes through <see cref="TryBeginAction"/>: one at a time, a short settle window after each,
 /// and only for rows that are still in the current list. The list is rebuilt after each action, and its
 /// recycled row elements once replayed a queued click onto a *different* network — this gate makes that
-/// impossible. Re-pointing the adapter that currently carries the PC's internet needs a confirming second click.
+/// impossible.
 /// </para>
 /// </summary>
 public sealed partial class WifiNetworksViewModel(ServiceConnection connection, AdapterInfo adapter, bool canEdit) : ObservableObject
 {
     private static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(1.5);
-    private static readonly TimeSpan ConfirmWindow = TimeSpan.FromSeconds(10);
 
     private List<string> _pins = [.. adapter.PinnedSsids];
     private DateTime _quietUntil = DateTime.MinValue;
-    private WifiRowViewModel? _confirmRow;
-    private DateTime _confirmUntil;
 
     public string AdapterName => adapter.DisplayName;
     public bool CanEdit => canEdit;
@@ -33,6 +30,16 @@ public sealed partial class WifiNetworksViewModel(ServiceConnection connection, 
     [ObservableProperty] public partial bool IsBusy { get; set; }
     [ObservableProperty] public partial string StatusText { get; set; } = "";
     [ObservableProperty] public partial string? ErrorText { get; set; }
+
+    /// <summary>
+    /// Dialog opened: show what Windows already knows at once, then scan fresh (Windows' cached list can be minutes
+    /// old and mark networks nearby as out of range). The list refreshes by itself when the scan is done.
+    /// </summary>
+    public async Task OpenAsync()
+    {
+        await LoadAsync(rescan: false);
+        if (ErrorText is null) await LoadAsync(rescan: true);
+    }
 
     public async Task LoadAsync(bool rescan)
     {
@@ -48,7 +55,6 @@ public sealed partial class WifiNetworksViewModel(ServiceConnection connection, 
             return;
         }
 
-        _confirmRow = null;
         Networks.Clear();
         foreach (var n in list) Networks.Add(new WifiRowViewModel(this, n));
         _pins = list.Where(n => n.IsPinned).Select(n => n.Ssid)
@@ -110,19 +116,6 @@ public sealed partial class WifiNetworksViewModel(ServiceConnection connection, 
             ErrorText = $"Enter the password for '{row.Ssid}'.";
             return;
         }
-
-        // Moving the adapter that carries the PC's internet interrupts it: ask for a second click.
-        if (IsPrimaryAdapter && !(ReferenceEquals(_confirmRow, row) && DateTime.UtcNow < _confirmUntil))
-        {
-            if (_confirmRow is not null) _confirmRow.ConfirmPending = false;
-            _confirmRow = row;
-            _confirmUntil = DateTime.UtcNow + ConfirmWindow;
-            row.ConfirmPending = true;
-            StatusText = $"{AdapterName} is your Primary network. Switching it to '{row.Ssid}' briefly interrupts your internet — click “Confirm switch” to go ahead.";
-            return;
-        }
-        row.ConfirmPending = false;
-        _confirmRow = null;
 
         IsBusy = true;
         ErrorText = null;
@@ -199,15 +192,10 @@ public sealed partial class WifiRowViewModel : ObservableObject
     [ObservableProperty] public partial bool ShowPassword { get; set; }
     [ObservableProperty] public partial string Password { get; set; } = "";
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ConnectLabel))]
-    [NotifyPropertyChangedFor(nameof(ConnectAutomationName))]
-    public partial bool ConfirmPending { get; set; }
-
-    public string ConnectLabel => ConfirmPending ? "Confirm switch" : "Connect";
+    public string ConnectLabel => "Connect";
 
     // Screen readers (and UI automation) see each row's controls flat, so names must say which network.
-    public string ConnectAutomationName => ConfirmPending ? $"Confirm switch to {Ssid}" : $"Connect to {Ssid}";
+    public string ConnectAutomationName => $"Connect to {Ssid}";
     public string PinAutomationName => $"Keep connected to {Ssid}";
     public string DisconnectAutomationName => $"Disconnect from {Ssid}";
     public string PasswordAutomationName => $"Password for {Ssid}";

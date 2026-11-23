@@ -248,6 +248,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 | `LEO.App` (UI/tray) | Logged-in user, non-elevated | At login via `HKCU\...\Run` **if "Start at login" is on** |
 
 - Turning "Start at login" off removes only the Run entry. Rules keep working in the background.
+- **On by default, set by the app itself (2026-11-23):** on first launch, with no choice saved in `ui.json`, the app registers `LEO.exe --tray` in HKCU Run, so it starts hidden in the tray at every login like other tray apps. A user who turns it off keeps it off; if it's on but points at another copy of LEO.exe, it's re-pointed to the running one. (Found live: the service was running but no tray icon, because the entry had never been created on the dev PC.) The M8 installer still offers the option.
 - "Disable LEO engine" sets the service to Manual and stops it, and Windows networking is restored.
 
 ---
@@ -309,7 +310,7 @@ leo-windows/
 | **M3** | TUN engine + App rules (**built**, §17) | Wintun up; all traffic goes through the engine; per-app routing works for TCP/UDP; safe restore if it crashes |
 | **M4** | Destination rules + DNS (**built**, §18) | Engine DNS (redir-host instead of fake-IP, §18), SNI sniffing, domain/CIDR/port rules, per-network DNS, precedence, "test a rule" |
 | **M5** | Profiles + Stats (**built**, §19) | Profiles with triggers; per-adapter/per-app stats; connections view |
-| **M6** | VPN coexistence | VPN as underlay + as target + bypass; kill-switch detection |
+| **M6** | VPN coexistence (designed, §20) | VPN as underlay + as target + bypass; kill-switch detection |
 | **M7** | Bonding | Bond groups, balancing modes, sticky sessions |
 | **M8** | Ship | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
 | *Future idea* | Bond through your own PC | Not planned. Single-stream bonding via the user's own second PC, never a hosted server (§15) |
@@ -362,7 +363,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 - **Lessons**: a converter bound to `Visibility` must return `Visibility` (a bool crashes XAML with E_NOINTERFACE). Actions must come from user events (`Click`), not from two-way-binding property changes: closing the Wi-Fi dialog once pinned a network by itself.
 - Verified on the dev PC: WiFi probes Up (6–27 ms) through itself; WiFi 2 discovered as a secondary station; the Wi-Fi dialog lists Zixel as "Saved on another adapter" and WPA3 networks with password entry; pins change only on real clicks; a phone USB tether (RNDIS) was detected live, ranked, probed Up (4 ms) and announced as a new adapter.
 - **Secondary STA limit (found live):** copying the Zixel profile to WiFi 2 works, but `WlanConnect` on a secondary station fails with ERROR_NOT_FOUND (1168). Windows drives secondaries itself: with `wlan_intf_opcode_secondary_sta_synchronized_connections` (18) on, the secondary joins the **same network as its primary** on the other band. So a DBS card's second station gives a second link to the *same* router, not a different network. LEO now explains this instead of showing the raw error. Turning synchronized mode on (admin) was not tried yet.
-- **Safety hardening (after a live incident):** an automation mistake on my side switched the *primary* WiFi from Zixel to another network for about a minute, and more connect requests followed than were clicked. The Wi-Fi dialog now: acts only on Click events; runs one action at a time with a settle window; ignores stale rows; logs every action to the UI log; and **requires a confirming second click to move the adapter that carries the PC's internet**. Controls carry per-network accessible names ("Connect to Zixel"), which also fixes screen readers hearing five identical "Connect" buttons.
+- **Safety hardening (after a live incident):** an automation mistake on my side switched the *primary* WiFi from Zixel to another network for about a minute, and more connect requests followed than were clicked. The Wi-Fi dialog now: acts only on Click events; runs one action at a time with a settle window; ignores stale rows; logs every action to the UI log; and required a confirming second click to move the adapter that carries the PC's internet (**removed 2026-11-23 at the user's request**: Connect switches on the first click, like Windows' own Wi-Fi menu; the one-action-at-a-time gate and settle window stay). Controls carry per-network accessible names ("Connect to Zixel"), which also fixes screen readers hearing five identical "Connect" buttons.
 - **Dual link (built and tested live):** button on the primary Wi-Fi card that sets Windows' synchronized dual-station mode (opcode 18, admin via the service); the choice is saved (`AdapterSettings.DualLink`) and re-applied if Windows resets it. On this PC, Windows accepted the setting and **immediately started trying to connect WiFi 2 to Zixel** (2.4 GHz BSS available alongside the 5 GHz one), but every attempt ends "The operation was cancelled", RSSI 255, retrying about once a minute. This looks like the Qualcomm driver declining a secondary station on this network/AP. The card says so instead of claiming success. Turned back **off** on the dev PC (saved as off, so LEO won't re-enable it). The feature stays: on cards/drivers that allow a secondary station it works with one click. Open question: does it work with a different AP, or with a newer driver?
 - **Wi-Fi "Forget" rules (user's decision):** when the user forgets a network in any Windows menu, LEO forgets it on **every** adapter, including hidden secondary stations Windows' menus can't reach, and removes it from all pins (`ForgetTracker`, checked every 15 s *before* pin enforcement). **LEO never forgets a network on its own**: only a removal on a primary adapter that's still present counts; unplugged adapters, secondaries and LEO's own deletes don't. Automatic reconnects (pins) **never copy** a profile from another adapter; copying happens only on an explicit Connect click. If a pinned network isn't saved anymore, the pin pauses and LEO says so once. (Found live: after the user forgot Zixel, a pin restored it from a hidden copy on WiFi 2. Fixed, and verified live: forgetting Zixel removed the WiFi 2 copy and the pin, and WiFi stayed disconnected.)
 - **Verified live on the dev PC:** pinning (LEO connected WiFi to Zixel 4 s after the pin, twice); Wi-Fi switched off → traffic on the phone tether instantly; advanced settings load/save; dual link toggle; forget-everywhere; **joining a network with a password from LEO's Wi-Fi dialog** (profile created, stored by Windows).
@@ -519,6 +520,14 @@ Rules regardless of option: release builds are made and signed in GitHub Actions
 - **Notifications:** every automatic switch ("LEO switched to Phone: Ethernet is connected."), and the flap pause.
 - **Privacy:** profile names and SSIDs are the user's own labels; the service log records profile ids and trigger kinds only.
 
+### 19.1 Wi-Fi pins respect manual switches (user's decision, 2026-11-23)
+Found live: after the user switched Wi-Fi in Windows' tray, LEO's "Keep connected" pin moved it back to Zixel every ~35 s, even with no LEO window open (the service enforces pins). Changed (`WifiPinPolicy`):
+- Windows records how each Wi-Fi connection was made (`WLAN_CONNECTION_MODE`): **Auto** = Windows connected or roamed on its own; **Profile** (and the other explicit modes) = someone picked the network. LEO remembers its own automatic reconnects so they aren't mistaken for the user's.
+- **The user picked another network on the Primary Wi-Fi** → it becomes that adapter's **first pinned network**; the old pins stay behind it as backups (notification "Wi-Fi stays on 'X'"). Stored in the active profile like any pin change.
+- **The user picked another network on a non-Primary Wi-Fi** → LEO leaves it there and keeps the saved pins unchanged; they apply again only if that connection drops (notification once).
+- **Drops and Windows' own automatic moves** are still corrected to the pinned network (the M2 purpose of pins). Forget-everywhere (§M2) and "never copy a profile on an automatic reconnect" are unchanged.
+- Tests: `WifiPinPolicyTests` (7).
+
 **Decisions (stats):**
 - **Per adapter:** Windows' own interface byte counters (the ones `Get-NetAdapterStatistics` shows), sampled every 2 s → throughput (5-minute graph), **session** (since the adapter last connected), **today**, **this month**. A counter reset (re-plug) counts from zero. Unplugged adapters used this month stay listed.
 - **Latency/loss history:** one point per existing internet check (no extra probes), last hour, in memory; failed checks shown as a percentage.
@@ -542,3 +551,136 @@ Rules regardless of option: release builds are made and signed in GitHub Actions
 - **Unplug/replug:** tether unplugged 10:35:39 (the engine re-pointed Phone's rule to Primary right away) → **10:35:59 automatic switch to Default** (the 20 s hold), notification, engine stopped (Default has no rules). Tether back with internet 10:36:18 → **10:36:29 switch to Phone** (notification), engine started with the rule. A short dropout at 10:36:54 didn't flip the profile. After that, a 10 MB download from the ruled domain went over Ethernet again (+10.39 MB, WiFi +0.00).
 - A wording fix from the live run (reasons keep the adapter's capital letter: "Ethernet is connected") was redeployed; after the service restart Phone was still active ("Automatic: Ethernet is connected"), and today's totals on the Stats page survived the restart.
 - Privacy: stats.db and its WAL contain no destination names; the service log has profile ids and trigger kinds only (the only host names in it are LEO's own probe targets).
+
+---
+
+## 20. M6 design: VPN coexistence (2026-11-23)
+
+Design only; nothing built yet. Refines §5.8. Built on the M3 engine (mihomo TUN, `type: direct` outbounds bound with `interface-name`, select groups re-pointed live through the engine API).
+
+**What the dev PC shows (read-only checks, 2026-11-23, engine running):**
+- **Tailscale** = adapter "Tailscale" / "Tailscale Tunnel", interface type 53 (`IF_TYPE_PROP_VIRTUAL`), classified `Vpn` (name marker and type 53). Automatic metric 5 (lower than WiFi 10 / Ethernet 30, which LEO sets). It was **not signed in**: no 100.x address (only 169.254.x), 3 IPv4 routes, no catch-all routes, no NRPT rules, no DNS servers of its own (IPv6 shows Windows' `fec0:0:0:ffff::1-3` placeholders). Service `tailscaled.exe` in `C:\Program Files\Tailscale\`.
+- **LEO's engine adapter** ("LEO" / "Meta Tunnel", also type 53) is filtered out by name before the VPN check, which matters because the `Wintun` marker and type 53 would otherwise make it a VPN.
+- **mihomo's `auto-route` does not add `0.0.0.0/1` + `128.0.0.0/1`** (unlike the §5.2 plan): with `route-exclude-address` it installs the *complement* of the excluded ranges as **82 IPv4 prefixes, /3 to /16** (`0.0.0.0/5`, `32.0.0.0/3`, `64.0.0.0/3`, …). Only the physical adapters have `0.0.0.0/0`. Consequence: **any VPN catch-all (`0/0`, or `0/1`+`128/1`) loses the longest-prefix match to LEO's routes while the engine runs**, whatever its metric. Only routes more specific than LEO's chunk (a VPN's server `/32`, a corporate `/24`, private ranges LEO excludes) beat the engine.
+
+### 20.1 Underlay (which physical network carries the VPN tunnel)
+
+**Decisions:**
+- **Three kinds of VPN client**, and LEO says honestly which one it sees:
+  1. **Binding clients** (WireGuard for Windows, Tailscale, clients built on them: Mullvad, NordLynx, Proton WireGuard, Cloudflare WARP): they bind their own sockets to the interface with the best `0.0.0.0/0` route (`IP_UNICAST_IF`, skipping themselves) and re-bind when routes change. Their traffic **never enters LEO's tunnel**, so an app rule can't move it. Their underlay **is LEO's Primary** (lowest metric among `0/0` routes, §5.1), and failover moves them too. LEO doesn't try to force them elsewhere.
+  2. **Host-route clients** (OpenVPN with `redirect-gateway`, Windows' built-in IKEv2/SSTP/L2TP, many corporate clients): they add a `/32` route to their server via the gateway that was Primary when they connected. That route is more specific than LEO's, so this traffic also bypasses the tunnel and stays on that network until the client reconnects (after a Primary change the client typically notices its server is gone and reconnects on the new Primary).
+  3. **Plain clients** (OpenVPN without redirect, TCP-mode clients, most split-tunnel VPNs): their transport enters LEO's tunnel like any app, so **an app rule pins the VPN to a network** (§5.8 "underlay"), with fallback/block as usual.
+- **LEO detects the kind instead of guessing:** while a VPN adapter is connected and the engine runs, LEO checks (in memory, never logged) whether the engine carries connections from that VPN's client program. Yes → "Its own traffic: carried by Ethernet (app rule)"; no → "Its own traffic: chooses its own network (follows Primary: WiFi)".
+- **VPN client presets** (`VpnClients` list in Core: display name + `PROCESS-PATH-REGEX` on file name and vendor folder; exact names verified during the build): `wireguard.exe`, `tailscaled.exe`/`tailscale-ipn.exe`, `openvpn.exe`/`openvpnserv.exe`/`OpenVPNConnect.exe`, `mullvad-daemon.exe`, `nordvpn-service.exe`/NordVPN `nordvpn.exe`, Proton `ProtonVPN.WireGuardService.exe`/`ProtonVPNService.exe`, `expressvpnd.exe`, `Surfshark.Service.exe`, `WindscribeService.exe`, `warp-svc.exe`, Cisco `vpnagent.exe`, GlobalProtect `PanGPS.exe`, Forti `FortiSSLVPNdaemon.exe`, `ZeroTier One.exe`/`zerotier-one_x64.exe`. Services are matched like any process (the engine resolves PID → path for services too). Store-app VPN plugins are matched by package family (§17). Windows' built-in VPN runs inside `svchost` (RasMan) and can't be matched by program: it is always kind 2.
+- **Presets are quick picks, not automatic rules.** The Apps page gets a "VPN clients" section in Add app listing the installed ones; the user picks a network as for any app rule. LEO creates no rule by itself.
+- **Loop guard (always on, independent of user rules):** whenever any VPN outbound exists in the engine, the engine config starts with one guard rule per preset (`PROCESS-PATH-REGEX,<client>,<user's underlay rule target or LEO-PRIMARY>`), so a VPN's own transport can never be sent into a VPN (its own or another's) by "unruled follows the VPN" (§20.3) or a destination rule. Saving an app rule that targets a VPN for a program in the presets is refused ("A VPN can't carry its own traffic").
+- The engine's own sockets stay bound to their interface (`interface-name`), so the engine never loops through a VPN's routes. LEO's health probes keep `IP_UNICAST_IF` binding.
+
+### 20.2 VPN as a route target
+
+**Decisions:**
+- **New property `IsRouteTarget`** next to `IsPrimaryCandidate`: `IsPrimaryCandidate` stays physical-only (metrics, priority list, failover, Primary). `IsRouteTarget` = `IsPrimaryCandidate || (Kind == Vpn && connected)`, where *connected* means the adapter is Up **and** has a usable IPv4 address (not 169.254.x). The Apps and URLs & IPs network pickers list route targets; VPNs show a "VPN" tag. A rule keeps pointing at a VPN that is currently disconnected (shown "VPN not connected").
+- **A VPN is never Primary.** Reasons: Primary is defined by interface metrics, and changing a VPN adapter's metric fights the VPN client (most rewrite it); failover between a VPN and physical networks would mean LEO deciding to drop or use the VPN on its own. "Send everything through the VPN" is covered by §20.3 instead. LEO never changes a VPN adapter's metric, DNS or routes.
+- **VPN outbounds:** each connected VPN becomes a `type: direct` outbound with `interface-name: <VPN alias>` (outbound name `vpn-<id>`), so it exists whether or not the VPN takes the default route. Adding/removing one reloads the engine config (outbounds are static, as with a re-plugged tether in M4); re-pointing groups stays live.
+- **VPN identity:** some VPNs create a new adapter (new GUID) per connection. Rules targeting a VPN store the adapter id **plus a VPN key** (interface description, e.g. "Tailscale Tunnel" / "WireGuard Tunnel: home"); when the id is gone, the rule re-resolves to a connected VPN with the same key. Same idea as MAC fallback for tethers.
+- **Health for VPNs:** the existing probe (NCSI + Cloudflare fallback) also runs **bound to each connected VPN** every 5 s. States shown: **Connected · internet** (probe Up), **Connected · private network only** (probe fails: Tailscale without an exit node, corporate split VPNs), **Not connected**. VPN health never triggers failover (VPNs aren't in the priority list).
+- **When a VPN-targeted rule's VPN is usable:** whenever the VPN is *connected*, not only when the probe is Up, because a split VPN carries specific destinations without carrying "the internet". The rule card's "Now:" line adds "(this VPN reports no internet access)" when the probe fails. Not connected → the rule's "if unavailable" choice.
+- **New rules that target a VPN default to "if unavailable: Block"** (people route an app through a VPN so it doesn't go out without it); physical targets keep "use Primary" (§17). The user can change it per rule.
+
+### 20.3 Bypass: a VPN that takes the default route
+
+**Decisions:**
+- **Route watching:** `NotifyRouteChange2` (IPv4 + IPv6), debounced 250 ms, then `GetIpForwardTable2`. A pure `VpnRoutes.Analyze(routes, adapters)` decides per VPN: **takes default** = a route on that VPN for `0.0.0.0/0`, **or** both `0.0.0.0/1` and `128.0.0.0/1`, **or** prefixes covering at least half of the public IPv4 space (clients that split the space differently); else **routes some destinations** (count of public prefixes, for display) or **private only**. Same for IPv6 (`::/0`, `::/1`+`8000::/1`). The analysis ignores LEO's own adapter.
+- **LEO's tunnel stays the catch-all without fighting:** because the engine's routes are /3–/16 (see dev-PC findings), a VPN's catch-all loses to them automatically; LEO never deletes or edits another product's routes. LEO checks after each route change that **its own** routes are still present; if another program removed them, LEO restarts the engine once (bounded by the M3 crash back-off) and otherwise stops it with a notification ("Another program keeps changing routes; split tunneling paused").
+- Routes a VPN pushes that are **more specific** than LEO's (corporate `/24`s, the private ranges LEO excludes, Tailscale's `100.64.0.0/10`) keep working natively through the VPN. LEO shows "This VPN also routes N address ranges itself" and does not apply its rules to those ranges (same as local addresses today). The private ranges stay excluded from the tunnel (`ExcludedRanges` unchanged), so Tailscale peers and corporate `10.x` networks keep working.
+- **Unruled traffic follows the VPN by default** (the recommendation): when a VPN takes the default route, the engine's `MATCH` target becomes that VPN, so turning a VPN on behaves as people expect and LEO doesn't silently undo it. Only rules aimed at a physical network bypass it ("bypass VPN" = an app or destination rule to WiFi/Ethernet). **Per-VPN option "Let unruled traffic skip this VPN"** (off by default) keeps unruled traffic on Primary; then only rules aimed at the VPN use it.
+  - Engine: a new select group `LEO-UNRULED` = [`vpn-<id>`…, `LEO-PRIMARY`] and `MATCH,LEO-UNRULED`. Re-pointed live through the engine API on VPN up/down, like failover. Two VPNs taking default: the one with the lower route metric wins (what Windows would do).
+  - **When a VPN starts taking the default route** and unruled traffic follows it, LEO closes the engine's open *unruled* connections that run over a physical network (engine API `DELETE /connections/{id}`), so long-lived connections reconnect through the VPN instead of staying outside it. Ruled connections are left alone.
+  - Window: between the VPN's route change and LEO re-pointing (debounce + API call, well under a second) new unruled connections can still start on Primary. Documented; not worth more machinery.
+- **DNS while unruled traffic follows a VPN:** Windows' DNS keeps pointing at the engine (198.18.0.2), so without a change the VPN's DNS would be skipped. So the engine's **default nameservers become the VPN adapter's own DNS servers, bound to the VPN outbound**; domains with rules to a physical network keep that network's DNS (`nameserver-policy`, §18). A VPN that sets no DNS (e.g. Tailscale without an exit node) changes nothing. **NRPT rules** (corporate split DNS, Tailscale's MagicDNS domains) are read from the registry (`…\Dnscache\Parameters\DnsPolicyConfig`, read-only) and mirrored into `nameserver-policy` bound to the VPN, so names the VPN owns resolve through the VPN even for lookups the engine makes (Windows' own queries for NRPT names already go straight to those servers). With "skip this VPN" on, only the NRPT domains go to the VPN's DNS.
+- **IPv6:** the engine runs with IPv6 off (M4), so IPv6 never enters LEO's tunnel today: it follows Windows' routes (into the VPN if the VPN routes IPv6, else the physical network). M6 keeps that and says so on the VPN card ("IPv6 follows Windows' routes"). Turning IPv6 capture on is an open question (§20.7).
+
+### 20.4 Kill-switch detection
+
+**Decisions:**
+- **Signals** (no new traffic beyond the existing probes plus one tunnel self-check):
+  - The physical probes are already bound to each adapter. A WFP block at connect time fails **immediately with `WSAEACCES` (10013)**; LEO's probe classifies errors as `Denied` / `Timeout` / `Refused` / `Ok` (today: failed).
+  - The VPN-bound probe (§20.2).
+  - **Tunnel self-check** while the engine runs: one TCP connect to the probe target bound to LEO's own adapter (it enters the engine and goes out per rules).
+- **Verdict** (pure `KillSwitchDetector`, time injected, 2 consecutive checks required):
+  - **Blocks bypass**: a VPN is connected and its probe is Up, and **every** physical probe fails with `Denied` (or all physicals that were Up turned to failures within 10 s of the VPN connecting). Shown as: physical networks "Blocked by <VPN>'s firewall" (new `HealthState.BlockedByVpn`, which **does not count as failing**: failover and profile triggers freeze instead of hopping between networks the VPN blocks anyway), a banner on Apps / URLs & IPs ("<VPN> blocks traffic outside it. Rules that bypass it can't connect while it's on."), and the rule cards' "Now:" lines. Rules aimed at physical networks are **not** silently moved into the VPN.
+  - **Blocks LEO**: the tunnel self-check fails while the VPN probe is Up (the VPN's firewall blocks apps from sending into LEO's adapter, as e.g. Mullvad's does). Then **LEO stands aside automatically**: it stops the engine (normal Windows routing = everything through the VPN), notifies ("Split tunneling paused: <VPN> only allows its own tunnel. It resumes when <VPN> disconnects."), and restarts the engine when that VPN disconnects. No user action can keep it on, because it would cut off every app (§5.9).
+- **Naming the product:** the firewall's owner is named from read-only WFP provider enumeration (`FwpmEngineOpen0` + `FwpmProviderEnum0`, provider display names), falling back to the VPN adapter's name. Read-only, best effort.
+- **LEO never disables, edits or works around another product's firewall, WFP filters or settings**, and never suggests turning a kill switch off; the message says what is blocked and that the VPN's own setting decides.
+
+### 20.5 Safety (§5.9)
+
+- **VPN connects while the engine runs:** route change → analysis → engine reload if a new VPN outbound is needed, `LEO-UNRULED` re-pointed, unruled physical connections closed (§20.3). Rules to physical networks keep working unless a kill switch blocks them (§20.4).
+- **VPN disconnects while the engine runs:** rules targeting it switch to their "if unavailable" choice (live re-point; Block by default for VPN targets), `LEO-UNRULED` goes back to `LEO-PRIMARY`, the VPN outbound is removed on the next reload. Unruled traffic then goes to Primary, the same as without LEO; LEO is not stricter than the VPN for traffic nobody ruled.
+- **Engine crash or stop with a VPN up:** the engine's adapter and routes disappear with it, so Windows' routes apply again: the VPN's catch-all takes everything (nothing leaks outside the VPN that wouldn't without LEO); bypass rules stop bypassing until the engine is back (M3 back-off). LEO never adds routes of its own outside the engine.
+- **Block never leaks while the engine runs:** a VPN-targeted rule with Block whose VPN is down maps to `REJECT` (same mechanism as M3). Guard rules (§20.1) are generated before user rules. When the engine is **not** running (crash back-off, stood aside, service stopped), Block rules are not enforced today; whether LEO should add its own Windows Firewall rules for that is an open question (§20.7).
+- **Health/failover safety:** `BlockedByVpn` never triggers failover; VPN adapters never get metrics, DNS or route changes; LEO's own probes stay bound and never use a VPN unless they probe that VPN.
+- **Privacy:** the kind detection (§20.1) and connection closing (§20.3) use engine connection data in memory only. The log records VPN adapter ids, the analysis result ("takes default: yes"), verdicts and counts, never destinations or which app connected where. Route tables are not logged.
+
+### 20.6 Implementation plan (for the M6 build session)
+
+**Core (`src/LEO.Core`):**
+- `Networking/AdapterKind.cs`: `IsRouteTarget(kind, connected)`; keep `IsPrimaryCandidate` physical-only.
+- `Networking/VpnRoutes.cs` (new): route record, `Analyze` → per VPN `TakesDefault4/6`, public prefix count, private-only; coverage math for "half the public space".
+- `Networking/VpnIdentity.cs` (new): VPN key from description/alias; re-resolve a rule's target.
+- `SplitTunnel/VpnClients.cs` (new): preset list and regexes; "is a VPN client" check used by the guard and rule validation.
+- `Health/KillSwitchDetector.cs` (new, pure): inputs per tick (VPN states, probe outcomes with error class, tunnel self-check), verdicts `None`/`BlocksBypass`/`BlocksLeo` with hysteresis.
+- `HealthState`: add `BlockedByVpn` (`IsFailing()` false); probe result gets an error class.
+- `SplitTunnel/EnginePlan.cs`: `EngineAdapter` gains `IsVpn`, `VpnKey`, `TakesDefault`, `SkipUnruled`; VPN outbounds (`vpn-<id>`); guard rules first; `LEO-UNRULED` group + `MATCH,LEO-UNRULED`; DNS default switches to the VPN's servers when unruled follows it; NRPT namespaces → `nameserver-policy`; VPN-targeted rules usable when connected.
+- `SplitTunnel/SplitTunnelSettings`: `AppRule`/`DestinationRule` gain `TargetVpnKey`; machine-wide `VpnSettings { Key, SkipUnruled }` list (not per profile, like dual link). Optional fields with defaults: **no config schema bump** (stays 2).
+
+**Service (`src/LEO.Service`):**
+- `Interop/RouteWatcher.cs` (new): `NotifyRouteChange2` + `GetIpForwardTable2`, debounced event.
+- `Interop/Nrpt.cs` (new): read NRPT rules from the registry.
+- `Interop/Wfp.cs` (new): read-only `FwpmProviderEnum0` for display names.
+- `Networking/VpnMonitor.cs` (new): owns route analysis, VPN probes, kill-switch verdicts; raises changes to NetworkManager and SplitTunnelManager.
+- `Health/InterfaceProbe.cs` / `BoundSockets.cs`: error classification (10013 = Denied); probe bound to LEO's adapter for the self-check.
+- `Networking/NetworkInventory.cs` / `NetworkManager.cs`: VPN adapters get connected/usable-address detection, VPN health, `IsRouteTarget` in `AdapterInfo`; failover freezes while `BlockedByVpn`.
+- `SplitTunnel/SplitTunnelManager.cs`: accept VPN targets (validation uses `IsRouteTarget`, refuses VPN clients → VPN), re-resolve VPN keys, re-point `LEO-UNRULED`, close unruled physical connections, stand aside / resume, notifications.
+- `SplitTunnel/MihomoEngine.cs`: `CloseConnectionAsync(id)`.
+- `Profiles/ProfileManager.cs`: triggers ignore VPN adapters (unchanged), freeze while `BlockedByVpn` (no switch because "Ethernet lost internet").
+
+**IPC (`src/LEO.Ipc`), protocol 8 → 9:**
+- `AdapterInfo`: `IsRouteTarget`, `Vpn` (`VpnInfo`: connected, internet/private only, takes default 4/6, public ranges it routes itself, its own traffic carried by `<adapter>`/follows Primary, firewall verdict and owner name, DNS server count, skip-unruled).
+- `HealthState.BlockedByVpn`; notification kinds `VpnFirewallDetected`, `SplitTunnelStoodAside`, `SplitTunnelResumed`, `RoutesTampered`.
+- New `SetVpnSettingsAsync(key, skipUnruled)`; `GetVpnClientPresetsAsync()` (installed preset clients for Add app).
+- `SplitTunnelInfo`: `StoodAside` + reason.
+
+**UI (`src/LEO.App`):**
+- Networks page: VPN cards (no priority/Primary controls): state line, "Carries: all traffic / N address ranges / private network only", "Its own traffic: …", "Let unruled traffic skip this VPN" toggle, firewall banner. Handlers only from Click, one ContentDialog at a time.
+- Apps and URLs & IPs: pickers use `IsRouteTarget` (VPN tag, disconnected VPN kept on existing rules); new VPN-target rules default to Block; Add app → "VPN clients" section; banners for "blocks bypass" and "stood aside"; "Now:" lines with VPN wording. "Test a rule" says "Unruled → <VPN> (follows the VPN)".
+- Tray tooltip/menu: "Through <VPN>" when unruled follows a VPN; "Split tunneling paused by <VPN>" when stood aside.
+- Stats: VPN adapters get cards like other networks (Windows counters), so per-app stats show `→ Tailscale`.
+
+### 20.7 Open questions (the user's call)
+
+1. **Fail-closed Block rules when the engine isn't running** (engine crashed, stood aside, service stopped): should LEO add **its own** Windows Firewall rules (a "LEO" rule group, per blocked program, removed on uninstall) so a "route through VPN, else block" app can't go out over WiFi in those moments? It changes Windows Firewall state, which LEO hasn't done so far. Recommendation: yes, but as a separate step at the end of M6 (or M8 hardening), only for VPN-targeted Block rules, never touching rules LEO didn't create.
+2. **IPv6 capture:** keep IPv6 outside the engine in M6 (it follows Windows' routes, VPN or not), or turn it on now (rules then cover IPv6, and a target without IPv6 blocks that rule's IPv6, §5.2)? Recommendation: keep it off in M6 and do it as its own step once an IPv6-capable network is available for testing; the phone tether may offer IPv6.
+3. **Test VPNs beyond Tailscale** (see 20.8): installing a second VPN client means a download and possibly an account. Which one, if any, may be used: WireGuard for Windows with the user's own server/peer, or a free commercial tier with a kill switch (e.g. Proton VPN Free)? And is there a Tailscale exit node (one of the user's own devices) to test "takes default"?
+
+### 20.8 Test plan
+
+**Unit tests (`tests/LEO.Tests`):**
+- `VpnRoutes.Analyze`: `0/0` on VPN; `0/1`+`128/1`; Mullvad-style split covering ≥ half; corporate `/24`s only (routes some); private only (Tailscale `100.64/10`); LEO's own adapter ignored; IPv6 `::/0` and `::/1`+`8000::/1`; two VPNs → lower metric wins.
+- Engine routes vs VPN routes: a helper computing which interface wins longest-prefix for sample addresses, given LEO's complement routes (from `ExcludedRanges`) and a VPN's catch-all; asserts the engine wins public addresses and the VPN keeps `10.x`/`100.64/10`.
+- `IsRouteTarget` / connected detection (169.254.x not connected); VPN never in `PriorityPlanner` candidates.
+- `VpnIdentity`: re-resolve by key after a GUID change; no match → rule's fallback.
+- `EnginePlan` with VPNs: `vpn-` outbound with `interface-name`; guard rules generated first for every preset whenever a VPN outbound exists; `LEO-UNRULED` membership and selection for follow / skip / VPN down / two VPNs; VPN-targeted rule with Block → `REJECT` when not connected; DNS default = VPN's servers bound to `vpn-` when following, physical-rule domains keep their policy, NRPT namespaces in policy; and the real-engine config check (`mihomo -t`) on a config with a VPN outbound and the new group.
+- Validation: rule VPN client → VPN refused; new VPN-target rule defaults to Block.
+- `KillSwitchDetector`: all physicals `Denied` + VPN Up → BlocksBypass after 2 ticks; one physical OK → None; physicals time out (not Denied) long after VPN connect → None (a real outage); self-check fails + VPN Up → BlocksLeo; VPN down → clears; `BlockedByVpn` doesn't trigger failover (`FailoverStateMachine` test) or profile switches.
+- Probe error classification: 10013 → Denied, timeout, refused.
+- Privacy: log lines from VPN monitor/analysis contain no addresses or prefixes (log-capture test as in M4).
+
+**Live on the dev PC with Tailscale (needs it signed in):**
+- Tailscale connected, no exit node: VPN card "Connected · private network only", "Carries: private network only", "Its own traffic: chooses its own network (follows Primary: WiFi)"; no takeover; unruled stays on WiFi; `100.x` peers reachable with the engine on.
+- Rule `curl.exe → Tailscale` without exit node: "Now:" says Tailscale with "(this VPN reports no internet access)"; disconnect Tailscale → rule blocks (default Block) and other apps keep working; reconnect → back.
+- Primary switch WiFi → Ethernet: `tailscaled` re-binds to Ethernet (adapter counters while Tailscale is busy), card follows.
+- With a **Tailscale exit node** (if the user has one): takeover detected (`0/0` on Tailscale); `LEO-UNRULED` → Tailscale; unruled download goes through Tailscale (counters on Tailscale + its underlay), rule `speed.cloudflare.com → Ethernet` bypasses it (Ethernet counter only); DNS: engine default nameserver becomes Tailscale's (100.100.100.100) if set; stop the engine → Windows routes send everything through the exit node; whether Tailscale's own firewall blocks bypass (detector verdict) is observed, not assumed.
+- Route tamper simulation is **not** done live (it would change network settings); covered by unit tests.
+
+**Needs another VPN (per open question 3):** a host-route client (OpenVPN / built-in IKEv2) for kind 2; a plain client for an underlay app rule actually moving the tunnel; a WFP kill switch ("Block untunneled traffic" in WireGuard for Windows, or a commercial client) for BlocksBypass and BlocksLeo + stand-aside/resume; a VPN that pushes DNS and NRPT rules.
