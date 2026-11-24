@@ -1,31 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- LEO mark: a yellow face wearing glasses. No eyes, no nose, no mouth. -->
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024">
+  <!-- Generator: Adobe Illustrator 29.7.1, SVG Export Plug-In . SVG Version: 2.1.1 Build 8)  -->
   <defs>
-    <radialGradient id="face" cx="40%" cy="32%" r="75%">
-      <stop offset="0" stop-color="#FFE36E"/>
-      <stop offset="0.6" stop-color="#FFC83D"/>
-      <stop offset="1" stop-color="#F2A60C"/>
+    <style>
+      .st0 {
+        fill: #fff;
+      }
+
+      .st1 {
+        fill: url(#radial-gradient);
+      }
+
+      .st2 {
+        fill: gray;
+      }
+
+      .st2, .st3 {
+        display: none;
+      }
+
+      .st4 {
+        fill: url(#linear-gradient);
+      }
+    </style>
+    <radialGradient id="radial-gradient" cx="636.5" cy="631.82" fx="636.5" fy="631.82" r="659.88" gradientTransform="translate(-80.69 -80.69) scale(1.16)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffc200"/>
+      <stop offset="1" stop-color="#ff8f00"/>
     </radialGradient>
-    <linearGradient id="lens" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3A3F4B"/>
-      <stop offset="1" stop-color="#14161B"/>
+    <linearGradient id="linear-gradient" x1="743.49" y1="149.84" x2="280.64" y2="612.68" gradientTransform="translate(-187.41 324.59) rotate(-30)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000"/>
+      <stop offset="1" stop-color="#404040"/>
     </linearGradient>
   </defs>
-
-  <circle cx="128" cy="128" r="120" fill="url(#face)" stroke="#D08A00" stroke-width="6"/>
-
-  <!-- temples (arms) running to the edge of the face -->
-  <path d="M30 104 L54 100" stroke="#1E2128" stroke-width="12" stroke-linecap="round"/>
-  <path d="M226 104 L202 100" stroke="#1E2128" stroke-width="12" stroke-linecap="round"/>
-
-  <!-- bridge -->
-  <path d="M112 106 Q128 94 144 106" fill="none" stroke="#1E2128" stroke-width="12" stroke-linecap="round"/>
-
-  <!-- lenses -->
-  <rect x="50" y="88" width="66" height="56" rx="22" fill="url(#lens)" stroke="#1E2128" stroke-width="10"/>
-  <rect x="140" y="88" width="66" height="56" rx="22" fill="url(#lens)" stroke="#1E2128" stroke-width="10"/>
-
-  <!-- lens highlights -->
-  <path d="M64 104 Q70 97 82 96" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="7" stroke-linecap="round"/>
-  <path d="M154 104 Q160 97 172 96" fill="none" stroke="#FFFFFF" stroke-opacity="0.55" stroke-width="7" stroke-linecap="round"/>
+  <g id="Layer_2" class="st3">
+    <rect width="1024" height="1024"/>
+    <rect class="st0" width="1024" height="1024"/>
+  </g>
+  <g id="Layer_1">
+    <path class="st2" d="M950.27,341.65v179.93c0,15.86-12.75,28.74-28.56,28.96-16.12.22-29.34-13.44-29.36-29.56-.33-209.3-170.71-379.49-380.09-379.49s-379.76,170.18-380.09,379.49c-.02,16.12-13.24,29.78-29.36,29.56-15.81-.22-28.56-13.1-28.56-28.96v-179.93c0-52.43,32.29-96.09,85.51-105.44,14.36-2.52,27.18-10.46,35.98-22.07,81.27-107.06,193-166.65,316.52-166.65s235.25,59.59,316.52,166.65c8.81,11.61,21.62,19.55,35.98,22.07,53.22,9.35,85.51,53.01,85.51,105.44Z"/>
+    <g>
+      <circle class="st1" cx="512" cy="512" r="480"/>
+      <path class="st4" d="M816.42,282.16c-14.35,53.62-175.82-5.1-375.24,114.86-204.39,122.96-219.67,280.23-280.22,263.99-61.96-16.62-72.69-144.28-64.75-204.27,17.44-131.61,96.55-240.58,208.02-305,111.47-64.43,245.28-78.53,367.86-27.85,55.86,23.11,160.93,96.25,144.33,158.27Z"/>
+    </g>
+  </g>
 </svg>

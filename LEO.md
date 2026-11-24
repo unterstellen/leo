@@ -38,7 +38,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 | Split-tunnel tech | **Wintun TUN adapter** plus a user-mode packet engine (no custom kernel driver) |
 | Stack | **C# / .NET 8+**, **WinUI 3** UI. Packet hot path in a native **Rust** core (see §5.3) |
 | Code signing | **Not decided yet**: choose at M8 from §16.1 (SignPath Foundation ruled out 2026-11-22). Release builds are signed in CI, never on a dev PC. Every binary and the installer get signed |
-| Branding | No custom brand colors: follow Windows 11 (system accent, light/dark). **Logo**: a yellow circle face wearing dark glasses, with no eyes, nose or mouth (`assets/leo.svg`) |
+| Branding | No custom brand colors: follow Windows 11 (system accent, light/dark). **Logo** (new, 2026-11-24): a gold-to-orange circle with a dark curved band across its upper left (`assets/leo.svg`, the user's design); it replaced the earlier yellow face with dark glasses |
 | Language | English only, permanently. No localization layer |
 | Failover | **Auto-failover by priority**, based on real internet health checks. Switches back when the network recovers |
 | Pinned network down | **Per-rule choice**: `Block` (kill switch) or `Fall back to Primary` |
@@ -381,7 +381,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 
 ## 13. Resolved Questions (2026-11-20)
 1. **Signing**: not decided (SignPath ruled out 2026-11-22; options in §16.1). Whatever certificate is used, the pipe-client check (§4.2) and the update check (§9) compare against the release certificate rather than a fixed name.
-2. **Branding**: follow Windows 11, with no custom colors. Logo = yellow face + dark glasses, no other features. Source `assets/leo.svg`, rendered by `tools/make-icon.ps1` into `src/LEO.App/Assets/leo.ico` (16–256 px; a simplified, bolder variant at ≤ 24 px for the tray). One icon works on both light and dark taskbars.
+2. **Branding**: follow Windows 11, with no custom colors. Logo (replaced 2026-11-24 with the user's design) = a gold-to-orange circle (radial gradient) with a dark curved band across its upper left. Source `assets/leo.svg`; `tools/make-icon.ps1` reads that file directly (circle, band path and both gradients) and renders `src/LEO.App/Assets/leo.ico` (16–256 px) plus `leo-32/64/256.png`, so a changed SVG only needs the script re-run. The same image at every size (the shape stays legible at 16 px). One icon works on both light and dark taskbars.
 3. **Update hosting**: GitHub Releases on the public repo https://github.com/unterstellen/leo-windows.
 4. **Health probe**: Microsoft NCSI + Cloudflare fallback, configurable (§5.7).
 5. **Localization**: English only, permanently.
