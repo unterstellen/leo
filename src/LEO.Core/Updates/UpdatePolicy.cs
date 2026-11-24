@@ -34,7 +34,7 @@ public enum UpdateAction
 
 /// <summary>
 /// The updater's decisions, pure so they're unit-tested (LEO.md §24.4): when to check, which version counts, whether
-/// to install on its own. Dev (unsigned) builds never update themselves.
+/// to install on its own. Dev builds (not official, not signed) never update themselves.
 /// </summary>
 public static class UpdatePolicy
 {
@@ -66,9 +66,10 @@ public static class UpdatePolicy
         return candidates.Where(v => v.FitsMsi && v.UpgradesOver(installed)).OrderDescending().FirstOrDefault();
     }
 
-    public static UpdateAction Decide(UpdateSettings settings, bool serviceSigned, ReleaseVersion? found)
+    /// <param name="updatesOn">Official build or code-signed service (LEO.md §26); dev builds never update.</param>
+    public static UpdateAction Decide(UpdateSettings settings, bool updatesOn, ReleaseVersion? found)
     {
-        if (!serviceSigned || found is null) return UpdateAction.Nothing;
+        if (!updatesOn || found is null) return UpdateAction.Nothing;
         return settings.AutoInstall ? UpdateAction.Install : UpdateAction.Offer;
     }
 

@@ -58,6 +58,15 @@ public static class LeoInfo
             ?.InformationalVersion.Split('+')[0] ?? "0.0.0";
 
     /// <summary>
+    /// True only in builds made by the release workflow (it passes <c>-p:LeoOfficialBuild=true</c>, which
+    /// Directory.Build.props turns into assembly metadata). Official builds update themselves with LEO's own update key
+    /// even without a code-signing certificate (LEO.md §26); local and Rider builds never do.
+    /// </summary>
+    public static bool IsOfficialBuild { get; } =
+        typeof(LeoInfo).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+            .Any(a => a.Key == "LeoOfficialBuild" && a.Value == "true");
+
+    /// <summary>
     /// LEO stays "Preview" until 1.0 (user's decision, LEO.md §24.7): every 0.x release is a normal GitHub release
     /// titled "LEO 0.x.y (Preview)", and the app says so.
     /// </summary>

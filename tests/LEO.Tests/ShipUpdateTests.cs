@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using Leo.Core;
 using Leo.Core.Config;
 using Leo.Core.Security;
@@ -131,9 +132,9 @@ public sealed class ShipUpdateTests
     public void Decide_Respects_Settings_And_Never_Updates_Dev_Builds()
     {
         var found = V("0.4.0");
-        Assert.Equal(UpdateAction.Install, UpdatePolicy.Decide(new UpdateSettings(), serviceSigned: true, found));
+        Assert.Equal(UpdateAction.Install, UpdatePolicy.Decide(new UpdateSettings(), updatesOn: true, found));
         Assert.Equal(UpdateAction.Offer, UpdatePolicy.Decide(new UpdateSettings { AutoInstall = false }, true, found));
-        Assert.Equal(UpdateAction.Nothing, UpdatePolicy.Decide(new UpdateSettings(), serviceSigned: false, found));
+        Assert.Equal(UpdateAction.Nothing, UpdatePolicy.Decide(new UpdateSettings(), updatesOn: false, found));
         Assert.Equal(UpdateAction.Nothing, UpdatePolicy.Decide(new UpdateSettings(), true, null));
     }
 
@@ -163,26 +164,115 @@ public sealed class ShipUpdateTests
     private static readonly SignerIdentity Other = LeoSigner with { CommonName = "Mallory" };
     private static readonly MsiIdentity GoodMsi = new("LEO", "0.4.0", LeoInfo.UpgradeCode, "UNTERSTELLEN");
 
-    private static UpdateVerifier Verifier(SignerIdentity? self, SignatureCheck sig, MsiIdentity? msi, string sha = "abc") =>
-        new(() => self, _ => sig, _ => msi, _ => sha);
+    // LEO's own update key (LEO.md §26): a throwaway test key, never the real one.
+    private static readonly ECDsa TestKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+    private static readonly ECDsa OtherKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+    private static readonly string[] TestKeys = [UpdateSignature.PublicKeyText(TestKey)];
+
+    private static UpdateVerifier Verifier(SignerIdentity? self, SignatureCheck sig, MsiIdentity? msi, string sha = "abc",
+        bool official = false, IReadOnlyList<string>? keys = null) =>
+        new(() => official, () => self, keys ?? TestKeys, _ => sig, _ => msi, _ => sha);
+
+    /// <summary>A stand-in MSI file and its LEO update signature.</summary>
+    private sealed class FakeMsi : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"leo-msi-{Guid.NewGuid():N}.msi");
+        public string Sig { get; }
+        public FakeMsi(ECDsa? key = null)
+        {
+            File.WriteAllBytes(Path, [1, 2, 3, 4, 5]);
+            using var s = File.OpenRead(Path);
+            Sig = UpdateSignature.Sign(s, key ?? TestKey);
+        }
+        public void Dispose() { try { File.Delete(Path); } catch { } }
+    }
 
     [Fact]
     public void Verifier_Accepts_Only_LEOs_Signed_Newer_Msi()
     {
+        using var f = new FakeMsi();
         var signed = new SignatureCheck(true, [LeoSigner]);
-        Assert.Null(Verifier(LeoSigner, signed, GoodMsi).Problem("x.msi", V("0.4.0"), V("0.3.0"), "abc"));
-        Assert.Null(Verifier(LeoSigner, signed, GoodMsi).Problem("x.msi", V("0.4.0"), V("0.3.0"), null)); // no SHA256SUMS: still fine
+        string? P(UpdateVerifier v, string installed = "0.3.0", string? sha = null) => v.Problem(f.Path, f.Sig, V("0.4.0"), V(installed), sha);
 
-        Assert.Contains("development build", Verifier(null, signed, GoodMsi).Problem("x.msi", V("0.4.0"), V("0.3.0"), null));
-        Assert.Contains("validly signed", Verifier(LeoSigner, SignatureCheck.Unsigned("tampered"), GoodMsi).Problem("x.msi", V("0.4.0"), V("0.3.0"), null));
-        Assert.Contains("someone else", Verifier(LeoSigner, new SignatureCheck(true, [Other]), GoodMsi).Problem("x.msi", V("0.4.0"), V("0.3.0"), null));
-        Assert.Null(Verifier(LeoSigner, new SignatureCheck(true, [Other, LeoSigner]), GoodMsi).Problem("x.msi", V("0.4.0"), V("0.3.0"), null)); // dual-signed
-        Assert.Contains("different product", Verifier(LeoSigner, signed, GoodMsi with { UpgradeCode = "{00000000-0000-0000-0000-000000000000}" }).Problem("x.msi", V("0.4.0"), V("0.3.0"), null));
-        Assert.Contains("different product", Verifier(LeoSigner, signed, GoodMsi with { ProductName = "Evil" }).Problem("x.msi", V("0.4.0"), V("0.3.0"), null));
-        Assert.Contains("not 0.4.0", Verifier(LeoSigner, signed, GoodMsi with { ProductVersion = "0.3.5" }).Problem("x.msi", V("0.4.0"), V("0.3.0"), null));
-        Assert.Contains("isn't newer", Verifier(LeoSigner, signed, GoodMsi).Problem("x.msi", V("0.4.0"), V("0.4.0"), null));
-        Assert.Contains("readable", Verifier(LeoSigner, signed, null).Problem("x.msi", V("0.4.0"), V("0.3.0"), null));
-        Assert.Contains("checksum", Verifier(LeoSigner, signed, GoodMsi, sha: "def").Problem("x.msi", V("0.4.0"), V("0.3.0"), "abc"));
+        Assert.Null(P(Verifier(LeoSigner, signed, GoodMsi), sha: "abc"));
+        Assert.Null(P(Verifier(LeoSigner, signed, GoodMsi))); // no SHA256SUMS: still fine
+
+        Assert.Contains("development build", P(Verifier(null, signed, GoodMsi)));
+        Assert.Contains("validly signed", P(Verifier(LeoSigner, SignatureCheck.Unsigned("tampered"), GoodMsi)));
+        Assert.Contains("someone else", P(Verifier(LeoSigner, new SignatureCheck(true, [Other]), GoodMsi)));
+        Assert.Null(P(Verifier(LeoSigner, new SignatureCheck(true, [Other, LeoSigner]), GoodMsi))); // dual-signed
+        Assert.Contains("different product", P(Verifier(LeoSigner, signed, GoodMsi with { UpgradeCode = "{00000000-0000-0000-0000-000000000000}" })));
+        Assert.Contains("different product", P(Verifier(LeoSigner, signed, GoodMsi with { ProductName = "Evil" })));
+        Assert.Contains("not 0.4.0", P(Verifier(LeoSigner, signed, GoodMsi with { ProductVersion = "0.3.5" })));
+        Assert.Contains("isn't newer", P(Verifier(LeoSigner, signed, GoodMsi), installed: "0.4.0"));
+        Assert.Contains("readable", P(Verifier(LeoSigner, signed, null)));
+        Assert.Contains("checksum", P(Verifier(LeoSigner, signed, GoodMsi, sha: "def"), sha: "abc"));
+    }
+
+    [Fact]
+    public void Unsigned_Official_Build_Installs_Only_With_LEOs_Update_Signature()
+    {
+        using var f = new FakeMsi();
+        var noCert = SignatureCheck.Unsigned("no Authenticode"); // not looked at: the service has no certificate either
+        var v = Verifier(null, noCert, GoodMsi, official: true);
+        Assert.Null(v.Problem(f.Path, f.Sig, V("0.4.0"), V("0.3.0"), null));
+
+        Assert.Contains("no LEO update signature", v.Problem(f.Path, null, V("0.4.0"), V("0.3.0"), null));
+        Assert.Contains("update signature", v.Problem(f.Path, "leo-update-signature-v1 AAAA", V("0.4.0"), V("0.3.0"), null));
+        Assert.Contains("update signature", v.Problem(f.Path, "garbage", V("0.4.0"), V("0.3.0"), null));
+        using (var other = new FakeMsi(OtherKey)) // signed by a key LEO doesn't know
+            Assert.Contains("update signature", v.Problem(other.Path, other.Sig, V("0.4.0"), V("0.3.0"), null));
+        File.WriteAllBytes(f.Path, [1, 2, 3, 4, 6]); // one byte changed after signing
+        Assert.Contains("update signature", v.Problem(f.Path, f.Sig, V("0.4.0"), V("0.3.0"), null));
+
+        using var g = new FakeMsi();
+        Assert.Contains("no update key", Verifier(null, noCert, GoodMsi, official: true, keys: []).Problem(g.Path, g.Sig, V("0.4.0"), V("0.3.0"), null));
+        Assert.Contains("development build", Verifier(null, noCert, GoodMsi, official: false).Problem(g.Path, g.Sig, V("0.4.0"), V("0.3.0"), null));
+    }
+
+    [Fact]
+    public void Code_Signed_Builds_Need_Both_Signatures()
+    {
+        using var f = new FakeMsi();
+        var signed = new SignatureCheck(true, [LeoSigner]);
+        Assert.Contains("no LEO update signature", Verifier(LeoSigner, signed, GoodMsi).Problem(f.Path, null, V("0.4.0"), V("0.3.0"), null));
+        Assert.Contains("validly signed", Verifier(LeoSigner, SignatureCheck.Unsigned("none"), GoodMsi, official: true).Problem(f.Path, f.Sig, V("0.4.0"), V("0.3.0"), null));
+    }
+
+    [Fact]
+    public void Update_Signature_Format_And_Key_Rotation()
+    {
+        var data = "LEO 0.4.0"u8.ToArray();
+        var text = UpdateSignature.Sign(new MemoryStream(data), TestKey);
+        Assert.StartsWith("leo-update-signature-v1 ", text);
+        Assert.True(UpdateSignature.Verify(new MemoryStream(data), text, TestKeys));
+        Assert.True(UpdateSignature.Verify(new MemoryStream(data), text + "\n", TestKeys)); // trailing newline in the .sig file
+        Assert.True(UpdateSignature.Verify(new MemoryStream(data), text, [UpdateSignature.PublicKeyText(OtherKey), TestKeys[0]])); // old + new key
+        Assert.False(UpdateSignature.Verify(new MemoryStream(data), text, [UpdateSignature.PublicKeyText(OtherKey)]));
+        Assert.False(UpdateSignature.Verify(new MemoryStream(data), text, ["not a key", ""]));
+        Assert.False(UpdateSignature.Verify(new MemoryStream(data), text.Replace("v1", "v2"), TestKeys));
+        using var p384 = ECDsa.Create(ECCurve.NamedCurves.nistP384);
+        Assert.False(UpdateSignature.Verify(new MemoryStream(data), text, [UpdateSignature.PublicKeyText(p384)])); // only P-256 keys count
+    }
+
+    [Fact]
+    public void Shipped_Update_Keys_Are_P256_Public_Keys()
+    {
+        // Empty until the publisher runs tools/update-key.cs (LEO.md §26); the release workflow refuses to sign then.
+        foreach (var key in UpdateKeys.Public)
+        {
+            Assert.StartsWith("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE", key); // SubjectPublicKeyInfo of a P-256 key
+            using var ecdsa = ECDsa.Create();
+            ecdsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(key), out _);
+            Assert.Equal(256, ecdsa.KeySize);
+        }
+    }
+
+    [Fact]
+    public void Local_Builds_Are_Not_Official()
+    {
+        Assert.False(LeoInfo.IsOfficialBuild); // only the release workflow passes -p:LeoOfficialBuild=true
+        Assert.EndsWith("/releases/download/v0.4.0/LEO-0.4.0-x64.msi.sig", ReleaseFeed.SigUrl(V("0.4.0")));
     }
 
     [Fact]
@@ -234,8 +324,8 @@ public sealed class ShipUpdateTests
             Config = new ConfigStore(Path.Combine(Dir, "config.json"));
             Hub.Raised += (_, n) => Notes.Add(n);
         }
-        public UpdateService Service(FakeGitHub gh, bool signed = true, UpdateVerifier? verifier = null) =>
-            new(Config, Hub, NullLogger<UpdateService>.Instance, verifier ?? Verifier(LeoSigner, SignatureCheck.Unsigned("x"), null), () => signed, gh)
+        public UpdateService Service(FakeGitHub gh, bool updatesOn = true, UpdateVerifier? verifier = null) =>
+            new(Config, Hub, NullLogger<UpdateService>.Instance, verifier ?? Verifier(LeoSigner, SignatureCheck.Unsigned("x"), null), () => updatesOn, gh)
             {
                 StatePath = Path.Combine(Dir, "state.json"),
                 DownloadDir = Path.Combine(Dir, "updates"),
@@ -248,7 +338,7 @@ public sealed class ShipUpdateTests
     {
         using var env = new Env();
         var gh = new FakeGitHub(_ => Redirect("https://github.com/unterstellen/leo/releases/tag/v99.0.0"));
-        using var svc = env.Service(gh, signed: false);
+        using var svc = env.Service(gh, updatesOn: false);
         var info = await svc.CheckAsync(automatic: false, CancellationToken.None);
         Assert.Equal(UpdateState.Off, info.State);
         Assert.Empty(gh.Requests);
@@ -301,7 +391,8 @@ public sealed class ShipUpdateTests
         await svc.CheckAsync(automatic: true, CancellationToken.None); // auto-install is the default
         var info = svc.Info;
         Assert.Equal(UpdateState.Failed, info.State);
-        Assert.Contains("validly signed", info.StateText);
+        Assert.Contains("no LEO update signature", info.StateText); // the fake GitHub has no .sig
+        Assert.Contains(gh.Requests, r => r.RequestUri!.ToString().EndsWith("LEO-99.0.0-x64.msi.sig"));
         Assert.Empty(Directory.EnumerateFiles(Path.Combine(env.Dir, "updates"), "*.msi"));
         Assert.Contains(env.Notes, n => n.Kind == NotificationKind.UpdateFailed);
         Assert.Contains(gh.Requests, r => r.RequestUri!.ToString() == "https://github.com/unterstellen/leo/releases/download/v99.0.0/LEO-99.0.0-x64.msi");

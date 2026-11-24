@@ -5,7 +5,7 @@
 | **App name** | LEO |
 | **Publisher (brand)** | UNTERSTELLEN — unterstellen.org |
 | **Company** | INFERSTELLEN — inferstellen.com |
-| **Code signing** | **Not decided yet** (SignPath ruled out 2026-11-22; Certum Open Source favourite, pending how its key works from GitHub-hosted runners). Options in §16.1, §24.3. The release workflow has a marked placeholder step until then (§25) |
+| **Code signing** | **None for now (user's decision, 2026-11-24): Preview releases ship unsigned**, and updates are protected by LEO's own update key (§26). A CA certificate (Certum Open Source, or an OV certificate with a cloud key) can be added later without redesign: optional Authenticode steps in the release workflow (§26). SignPath ruled out 2026-11-22; Azure Artifact Signing not available (individuals in the USA/Canada only) |
 | **Repository** | https://github.com/unterstellen/leo (public) |
 | **Releases / updates** | https://github.com/unterstellen/leo/releases |
 | **Platform** | Windows 11, x64 only |
@@ -267,7 +267,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 ## 9. Distribution
 - **MSI** built with the WiX Toolset. MSIX isn't used because it can't install the Wintun driver adapter or a LocalSystem service cleanly.
 - Installer: installs the service, Wintun, the UI and Start menu shortcuts, with the option "Start LEO at login".
-- Everything Authenticode-signed (with timestamp) using the certificate chosen at M8 (§16.1), in the GitHub Actions release workflow. Local dev builds stay unsigned (Smart App Control off on the dev PC).
+- Everything Authenticode-signed (with timestamp) using the certificate chosen at M8 (§16.1), in the GitHub Actions release workflow. Local dev builds stay unsigned (Smart App Control off on the dev PC). **Changed 2026-11-24 (§26):** until a certificate is bought, releases ship unsigned and the updater checks LEO's own update signature instead.
 - **Hosting: GitHub Releases** at https://github.com/unterstellen/leo/releases (public repo). Each release has the signed `LEO-<version>-x64.msi` attached. Tags look like `v0.2.0`.
 - **Auto-update** (built in M8, §24.4, §25): once a day the service reads `https://github.com/unterstellen/leo/releases/latest` **without following the redirect** (the Location names the tag; not the rate-limited REST API), compares it with its own version, downloads `LEO-<x.y.z>-x64.msi` into `ProgramData\…\updates\` (admins only), **verifies the Authenticode signature, the signer (same publisher as the running service), the MSI's UpgradeCode/ProductName/ProductVersion and SHA256SUMS**, then runs `msiexec /qn` on its own (silent automatic updates, user's decision). Settings → Updates can switch automatic installing or checking off. The Canary channel reads `releases.atom`, which lists pre-releases.
 - Channels: `canary` (git branch `canary`) → `main` (stable).
@@ -314,7 +314,7 @@ leo/
 | **M5** | Profiles + Stats (**built**, §19) | Profiles with triggers; per-adapter/per-app stats; connections view |
 | **M6** | VPN coexistence (**built**, §20–§21) | VPN as underlay + as target + bypass; kill-switch detection |
 | **M7** | Bonding (**built**, §22–§23) | Bond groups, balancing modes, sticky sessions |
-| **M8** | Ship (**built**, §24, §25; signing pending the CA) | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
+| **M8** | Ship (**built**, §24, §25; unsigned Preview + own update key, §26) | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
 | *Future idea* | Bond through your own PC | Not planned. Single-stream bonding via the user's own second PC, never a hosted server (§15) |
 
 ---
@@ -428,7 +428,7 @@ Goal: anyone on Windows 11 x64 downloads LEO from GitHub Releases, installs it w
 |---|---|---|
 | Install | WiX MSI: service in Program Files, Start menu entry, optional "start at login", one admin prompt | Dev script only |
 | Prerequisites | **Self-contained** builds: .NET runtime and Windows App SDK bundled, nothing to install first | App/service currently need .NET 10 installed |
-| Signing | A trusted certificate signs MSI + all binaries in the release workflow (option chosen at M8, §16.1). Unsigned builds are **blocked by Smart App Control** (on by default on many fresh Windows 11 PCs) and warned about by SmartScreen | Not decided |
+| Signing | A trusted certificate signs MSI + all binaries in the release workflow (option chosen at M8, §16.1). Unsigned builds are **blocked by Smart App Control** (on by default on many fresh Windows 11 PCs) and warned about by SmartScreen | Unsigned Preview for now, own update key (§26) |
 | Updates | GitHub Releases + in-app updater (§9), signature-checked | Designed, not built |
 | Uninstall | Removes service, Wintun, metric overrides, DNS changes; restores Windows networking; keeps or asks about config | Partly (service stop restores metrics) |
 | Hardware coverage | Public **beta** on GitHub Releases (pre-release) before v1; test matrix: Intel / Realtek / MediaTek / Qualcomm Wi-Fi, USB Ethernet dongles, Android + **iPhone** USB tethering, Bluetooth PAN, docks; with common VPNs (WireGuard, OpenVPN, commercial), antivirus suites and Windows Firewall on | Tested on one PC (Qualcomm DBS Wi-Fi, Android tether, Tailscale) |
@@ -1178,3 +1178,27 @@ Built from §24 with the user's decisions (§24.10: silent automatic updates, un
 - **Windows App SDK licence and the GPL:** the WinAppSDK runtime files are under Microsoft's own licence terms, not an open-source licence. GPLv3's system-library exception may not cover them. Since UNTERSTELLEN/INFERSTELLEN hold LEO's copyright, the usual fix is an **additional permission** (GPLv3 §7) in LICENSE/README allowing LEO to be combined with the Windows App SDK and .NET; worth deciding before v0.1.0 (mihomo is a separate GPL program and needs nothing).
 - **Trim the Windows App SDK payload** (AI components LEO doesn't use) to shrink the MSI and the licence list.
 - `CHANGELOG.md` 0.1.0 is a draft to edit before tagging.
+
+---
+
+## 26. Unsigned Preview + LEO's own update key (2026-11-24)
+
+**Decision (user, 2026-11-24):** no code-signing certificate for now. Certum Open Source (about $77 a year, a personal name in the certificate, signing from GitHub only by storing the SimplySign one-time-code secret as a GitHub secret) was looked at and dropped; the OV options (SSL.com eSigner about $310 a year, DigiCert KeyLocker more; GlobalSign and Sectigo need an own HSM) were judged too costly for now; Azure Artifact Signing takes individuals from the USA/Canada only. LEO ships as an **unsigned Preview**. A certificate can be added later without redesign.
+
+**What unsigned means for users (README):** SmartScreen shows "Windows protected your PC" / *Unknown publisher* (More info → Run anyway); UAC shows *Publisher: Unknown*; **Smart App Control blocks LEO** where it's on (no override; turning it off can't be undone without a reinstall); some antivirus may flag it. With no Authenticode, the pipe-client and engine signature checks (§24.6 items 2 and 5) stay off as in dev builds; the pipe ACL and the per-user access level (admins change, standard users read) still apply.
+
+**LEO's own update key (keeps the §24.4 rule "only LEO's publisher can push an update"):**
+- **ECDSA P-256 / SHA-256** (built into .NET, no new package). `Core/Updates/UpdateSignature`: the release workflow writes `LEO-x.y.z-x64.msi.sig` = one line `leo-update-signature-v1 <base64 r|s>` over the MSI's bytes. The MSI's ProductVersion is inside the signed bytes, so an old signed MSI can't be passed off as a newer one (the verifier also checks the version).
+- **Public keys** in `Core/Updates/UpdateKeys.cs` (a list, so a key can be rotated: add the new key, ship one release signed with the old key, then switch). **Private key** only in the user's password manager and the GitHub secret `LEO_UPDATE_KEY` in the environment `release` (required reviewer = the user). Losing it means installed LEOs can only be updated by reinstalling by hand.
+- `tools/update-key.cs` (one-file .NET app, `dotnet run tools/update-key.cs -- new | sign <msi> | verify <msi> [sig] | selftest`): `new` prints both keys and writes nothing; `sign` (CI) refuses a secret whose public key isn't in `UpdateKeys.cs`.
+- **Official builds:** `build-release.ps1 -Official` (release workflow only) adds `-p:LeoOfficialBuild=true` → assembly metadata → `LeoInfo.IsOfficialBuild`. Updates are on for **official or code-signed** builds; local and Rider builds stay "Development build: updates are off".
+- **`UpdateVerifier`** (in this order): updates on → `UpdateKeys` not empty → `.sig` downloaded (`ReleaseFeed.SigUrl`) and valid for one of the keys → **if the service is Authenticode-signed**, the §24.4 signer checks too (both signatures needed then) → UpgradeCode / ProductName / version newer → SHA256SUMS as an extra check.
+- **UI:** Settings → Updates/About say "Preview build, not code-signed. Updates are checked with LEO's own update key."; buttons follow `UpdateState != Off` instead of `Signed`; diagnostics say "official build, not code-signed". No IPC change (protocol stays 11).
+
+**Release workflow:** the build job publishes with `-Official` and runs the key tool's selftest; the `sign` job (environment `release`, waits for approval) builds the MSI and writes the `.sig`; the Authenticode steps (list files, sign payload, sign MSI, `signtool verify`) run only when the variable `AUTHENTICODE` is `true`, and the two signing steps are still placeholders for the CA's tool. The draft release carries the MSI, the `.sig`, `SHA256SUMS.txt` and the mihomo source; its notes say "not code-signed yet" unless `AUTHENTICODE` is true.
+
+**Tests (297, all green):** unsigned official build installs only with a valid update signature (missing, garbage, other key, one byte changed, no keys, dev build); code-signed builds need both signatures; format, trailing newline, key rotation, P-384 refused; shipped keys are P-256; local builds aren't official; the service asks for the `.sig` and refuses without it.
+
+**Not verified:** the workflow changes haven't run on GitHub (no YAML parser on the dev PC); no official build or `.sig` has been made yet (needs the key).
+
+**Open for the user:** run `dotnet run tools/update-key.cs -- new`, paste the public key into `UpdateKeys.cs`, store the private key (password manager + secret `LEO_UPDATE_KEY` in environment `release`). Later, optionally: a CA certificate (fill the two placeholder steps, set `AUTHENTICODE = true`), winget.

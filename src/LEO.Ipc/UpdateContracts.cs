@@ -3,7 +3,7 @@ namespace Leo.Ipc;
 /// <summary>Where the updater is (LEO.md §24.4).</summary>
 public enum UpdateState
 {
-    /// <summary>Unsigned (development) build: updates are off.</summary>
+    /// <summary>Development build (not official, not code-signed): updates are off (LEO.md §26).</summary>
     Off = 0,
     Idle = 1,
     Checking = 2,
@@ -16,6 +16,8 @@ public enum UpdateState
 }
 
 /// <summary>Settings → Updates and About, from the service (protocol 11).</summary>
+/// <remarks><see cref="Signed"/>/<see cref="Signer"/> = Authenticode (a CA certificate); an official build without one
+/// still updates (State isn't Off), checked with LEO's own update key (LEO.md §26).</remarks>
 public sealed record UpdateInfo(
     string InstalledVersion,
     bool Signed,

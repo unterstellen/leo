@@ -18,6 +18,8 @@ public static class ReleaseFeed
 
     public static string MsiName(ReleaseVersion v) => $"LEO-{v.Core}-x64.msi";
     public static string MsiUrl(ReleaseVersion v) => $"{LeoInfo.ReleasesUrl}/download/{v.Tag}/{MsiName(v)}";
+    /// <summary>LEO's own update signature next to the MSI (<see cref="UpdateSignature"/>, LEO.md §26).</summary>
+    public static string SigUrl(ReleaseVersion v) => MsiUrl(v) + ".sig";
     public static string SumsUrl(ReleaseVersion v) => $"{LeoInfo.ReleasesUrl}/download/{v.Tag}/SHA256SUMS.txt";
     public static string NotesUrl(ReleaseVersion v) => $"{LeoInfo.ReleasesUrl}/tag/{v.Tag}";
 
