@@ -1,4 +1,4 @@
-using Microsoft.UI.Dispatching;
+﻿using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.Windows.AppLifecycle;
 
@@ -18,14 +18,16 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        // DLLs only from System32 and the install folder (LEO.md §24.6).
-        Leo.Core.Security.DllSearch.Restrict();
-        // The Start menu shortcut carries the same AppUserModelID, so toasts and the taskbar group are LEO's (§24.2).
+        // DLLs only from System32 and the install folder (LEO.md Â§24.6).
+        // Not SetDefaultDllDirectories: it breaks WinUI resource loading (themeresources.xaml not found, found in M8).
+        // Removing the current directory from the DLL search is the part that matters for an app in Program Files.
+        Leo.Core.Security.DllSearch.RemoveCurrentDirectory();
+        // The Start menu shortcut carries the same AppUserModelID, so toasts and the taskbar group are LEO's (Â§24.2).
         SetCurrentProcessExplicitAppUserModelID(Leo.Core.LeoInfo.AppUserModelId);
 
         StartInTray = args.Contains(StartupManager.TrayArgument, StringComparer.OrdinalIgnoreCase);
 
-        // The MSI's machine-wide login entry starts LEO for every user; a user who switched it off exits here (§24.2).
+        // The MSI's machine-wide login entry starts LEO for every user; a user who switched it off exits here (Â§24.2).
         if (StartupManager.ShouldExitAtTrayStart(Services.UiSettings.Load().StartAtLogin, StartInTray)) return 0;
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
@@ -39,7 +41,7 @@ public static class Program
             return 0;
         }
 
-        // An update (MSI + Restart Manager) closes LEO and starts it again in the tray afterwards (§24.2).
+        // An update (MSI + Restart Manager) closes LEO and starts it again in the tray afterwards (Â§24.2).
         // Only restarts asked for by Restart Manager: not after a crash, a hang or a reboot.
         RegisterApplicationRestart(StartupManager.TrayArgument, RestartNoCrash | RestartNoHang | RestartNoReboot);
 

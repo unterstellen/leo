@@ -52,3 +52,31 @@ jobs:
           name: test-results
           path: TestResults/*.trx
           if-no-files-found: ignore
+
+  # M8 packaging smoke test (LEO.md §24.9): self-contained publish, the app/service file-clash check, the PE list and
+  # an UNSIGNED MSI, with the pinned upstream engine (tools/get-engine.ps1). Never signs, never releases.
+  package:
+    name: Package smoke test (unsigned MSI)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+      DOTNET_NOLOGO: 1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - name: Fetch the pinned engine
+        shell: pwsh
+        run: ./tools/get-engine.ps1
+      - name: Payload + unsigned MSI
+        shell: pwsh
+        run: ./tools/build-release.ps1
+      - uses: actions/upload-artifact@v6
+        with:
+          name: unsigned-msi
+          path: |
+            artifacts/release/LEO-*-x64.msi
+            artifacts/release/payload-signatures.txt
+          retention-days: 7

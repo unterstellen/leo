@@ -17,6 +17,13 @@ public sealed class UiSettings
     /// </summary>
     public bool? StartAtLogin { get; set; }
 
+    /// <summary>"Later" on an update toast: that version isn't toasted again on that day (M8).</summary>
+    public string? PostponedUpdateVersion { get; set; }
+    public DateOnly? PostponedUpdateOn { get; set; }
+
+    /// <summary>The update result (LEO.md §24.4) this user was last told about, so it's toasted once.</summary>
+    public DateTimeOffset? LastUpdateResultShown { get; set; }
+
     public static UiSettings Load()
     {
         try

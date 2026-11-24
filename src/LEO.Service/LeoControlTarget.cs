@@ -21,8 +21,11 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
 
     public LeoControlTarget(EngineStatusProvider status, NetworkManager? networks, ClientIdentity client, ILogger log,
         WifiManager? wifi = null, NotificationHub? hub = null, Leo.Service.SplitTunnel.SplitTunnelManager? splitTunnel = null,
-        Leo.Service.Profiles.ProfileManager? profiles = null, Leo.Service.Stats.StatsCollector? stats = null)
+        Leo.Service.Profiles.ProfileManager? profiles = null, Leo.Service.Stats.StatsCollector? stats = null,
+        Leo.Service.Updates.UpdateService? updates = null)
     {
+        _updates = updates;
+        if (_updates is not null) _updates.Changed += OnUpdateChanged;
         _profiles = profiles;
         _stats = stats;
         _status = status;
@@ -118,6 +121,48 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
         Mutate(nameof(SetUnruledBondAsync), () => Split.SetUnruledBondAsync(bondId, cancellationToken));
 
     public Task<BondsLiveInfo> GetBondsLiveAsync(CancellationToken cancellationToken = default) => Split.GetBondsLiveAsync(cancellationToken);
+
+    // ── Updates (M8) ────────────────────────────────────────────────────────
+
+    private readonly Leo.Service.Updates.UpdateService? _updates;
+
+    public event EventHandler<UpdateInfo>? UpdateChanged;
+
+    private void OnUpdateChanged(object? sender, UpdateInfo e) => UpdateChanged?.Invoke(this, e);
+
+    private Leo.Service.Updates.UpdateService Updates =>
+        _updates ?? throw new LocalRpcException("Updates are not available.") { ErrorCode = LeoErrorCodes.InvalidOperation };
+
+    public Task<UpdateInfo> GetUpdateInfoAsync(CancellationToken cancellationToken = default) => Task.FromResult(Updates.Info);
+
+    /// <summary>Any user may check: it only reads GitHub's release list.</summary>
+    public Task<UpdateInfo> CheckForUpdatesAsync(CancellationToken cancellationToken = default) =>
+        Updates.CheckAsync(automatic: false, CancellationToken.None);
+
+    /// <summary>
+    /// Admins only (standard users see "Ask an administrator to update LEO"). The download and install continue in the
+    /// background and report through <see cref="UpdateChanged"/>; the service is restarted by the MSI at the end.
+    /// </summary>
+    public Task InstallUpdateAsync(CancellationToken cancellationToken = default) =>
+        Mutate(nameof(InstallUpdateAsync), () =>
+        {
+            var info = Updates.Info;
+            if (!info.Signed) throw new InvalidOperationException("This is a development build, so it doesn't install updates.");
+            if (info.LatestVersion is null) throw new InvalidOperationException("No update was found. Check for updates first.");
+            _ = Task.Run(async () =>
+            {
+                try { await Updates.InstallAsync(CancellationToken.None); }
+                catch (Exception ex) { _log.LogWarning("Update install failed: {Message}", ex.Message); }
+            });
+            return Task.CompletedTask;
+        });
+
+    public Task SetUpdateSettingsAsync(bool autoCheck, bool autoInstall, string channel, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SetUpdateSettingsAsync), () =>
+        {
+            Updates.SetSettings(autoCheck, autoInstall, channel);
+            return Task.CompletedTask;
+        });
 
     private void OnSplitTunnelChanged(object? sender, SplitTunnelInfo e) => SplitTunnelChanged?.Invoke(this, e);
 
@@ -326,5 +371,6 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
         if (_hub is not null) _hub.Raised -= OnNotification;
         if (_split is not null) _split.Changed -= OnSplitTunnelChanged;
         if (_profiles is not null) _profiles.Changed -= OnProfilesChanged;
+        if (_updates is not null) _updates.Changed -= OnUpdateChanged;
     }
 }

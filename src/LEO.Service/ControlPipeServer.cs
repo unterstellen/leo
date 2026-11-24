@@ -12,7 +12,8 @@ public sealed class ControlPipeServer(
     EngineStatusProvider status, NetworkManager networks, ILoggerFactory loggers,
     Leo.Service.Wifi.WifiManager? wifi = null, NotificationHub? hub = null,
     Leo.Service.SplitTunnel.SplitTunnelManager? splitTunnel = null,
-    Leo.Service.Profiles.ProfileManager? profiles = null, Leo.Service.Stats.StatsCollector? stats = null) : BackgroundService
+    Leo.Service.Profiles.ProfileManager? profiles = null, Leo.Service.Stats.StatsCollector? stats = null,
+    Leo.Service.Updates.UpdateService? updates = null) : BackgroundService
 {
     private readonly ILogger _log = loggers.CreateLogger<ControlPipeServer>();
 
@@ -105,7 +106,7 @@ public sealed class ControlPipeServer(
         _log.LogInformation("Client connected: pid={Pid} user={User} image={Image} access={Access} ({Trust})",
             client.ProcessId, client.UserName, client.ImagePath, client.Access, Leo.Core.Security.ClientTrustPolicy.Describe(trust));
 
-        using var target = new LeoControlTarget(status, networks, client, loggers.CreateLogger<LeoControlTarget>(), wifi, hub, splitTunnel, profiles, stats);
+        using var target = new LeoControlTarget(status, networks, client, loggers.CreateLogger<LeoControlTarget>(), wifi, hub, splitTunnel, profiles, stats, updates);
         using var rpc = PipeTransport.CreateRpc(pipe);
         // Surface protocol-level failures (they otherwise vanish inside StreamJsonRpc).
         rpc.TraceSource.Switch.Level = System.Diagnostics.SourceLevels.Warning;

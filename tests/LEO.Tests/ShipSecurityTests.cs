@@ -362,6 +362,17 @@ public sealed class ShipSecurityTests
         Assert.Contains("install folder", PipeServerCheck.Problem(new PipeServerInfo(0, @"C:\Users\x\LEO.Service.exe"), install));
         Assert.NotNull(PipeServerCheck.Problem(null, install));
 
+        // A standard user can't read a SYSTEM service's image (found live): the SCM's view decides instead.
+        var svcExe = install + @"\LEO.Service.exe";
+        Assert.Null(PipeServerCheck.Problem(new PipeServerInfo(0, null, 1234, 1234, svcExe), install));
+        Assert.Contains("isn't LEO's service process", PipeServerCheck.Problem(new PipeServerInfo(0, null, 999, 1234, svcExe), install));
+        Assert.Contains("isn't running", PipeServerCheck.Problem(new PipeServerInfo(0, null, 1234, 0, svcExe), install));
+        Assert.Contains("isn't running", PipeServerCheck.Problem(new PipeServerInfo(0, null, 1234, null, svcExe), install));
+        Assert.Contains("install folder", PipeServerCheck.Problem(new PipeServerInfo(0, null, 1234, 1234, @"C:\Temp\LEO.Service.exe"), install));
+        Assert.Contains("couldn't be read", PipeServerCheck.Problem(new PipeServerInfo(0, null, 1234, 1234, null), install));
+        Assert.Equal(@"C:\Program Files\UNTERSTELLEN\LEO\LEO.Service.exe",
+            PipeServerCheck.ExePath(@"""C:\Program Files\UNTERSTELLEN\LEO\LEO.Service.exe"" --flag"));
+
         Assert.True(PipeServerCheck.ShouldEnforce(install + @"\LEO.exe", install));
         Assert.False(PipeServerCheck.ShouldEnforce(@"C:\src\leo\bin\Debug\LEO.exe", install));
     }
@@ -379,5 +390,18 @@ public sealed class ShipSecurityTests
         Assert.Equal(Environment.ProcessPath, info!.ImagePath, ignoreCase: true);
         Assert.Equal((uint)Process.GetCurrentProcess().SessionId, info.SessionId);
         Assert.NotNull(PipeServerCheck.Problem(info, LeoPaths.InstallDir)); // the test host is not LEO's service
+    }
+
+    /// <summary>
+    /// Live (dev PC with the service installed; skipped elsewhere): what a non-elevated app sees for the real "LEO"
+    /// service through the SCM, the route the pipe check uses when the image path can't be read.
+    /// </summary>
+    [Fact]
+    public void Scm_Reports_The_Installed_Services_Process_And_Exe()
+    {
+        var (pid, image) = PipeServerCheck.ServiceView(LeoInfo.ServiceName);
+        if (image is null) return; // no LEO service on this machine (CI)
+        Assert.EndsWith("LEO.Service.exe", image, StringComparison.OrdinalIgnoreCase);
+        if (pid is > 0) Assert.Contains(Process.GetProcesses(), p => p.Id == pid);
     }
 }

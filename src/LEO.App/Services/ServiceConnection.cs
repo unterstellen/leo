@@ -57,6 +57,17 @@ public sealed class ServiceConnection : IAsyncDisposable
         SplitTunnelChanged?.Invoke(this, EventArgs.Empty);
     }
 
+    public UpdateInfo Update { get; private set; } = UpdateInfo.Empty;
+
+    /// <summary>The updater's state or settings changed (M8).</summary>
+    public event EventHandler? UpdateChanged;
+
+    private void SetUpdate(UpdateInfo info)
+    {
+        Update = info;
+        UpdateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
     public ProfilesInfo Profiles { get; private set; } = ProfilesInfo.Empty;
 
     /// <summary>Profiles, the active profile or its reason changed.</summary>
@@ -140,11 +151,13 @@ public sealed class ServiceConnection : IAsyncDisposable
                 control.NotificationRaised += (_, n) => Notified?.Invoke(this, n);
                 control.SplitTunnelChanged += (_, s) => SetSplitTunnel(s);
                 control.ProfilesChanged += (_, p) => SetProfiles(p);
+                control.UpdateChanged += (_, u) => SetUpdate(u);
 
                 SetState(ConnectionState.Connected, await control.GetStatusAsync(ct), control);
                 SetNetworks(await control.GetNetworksAsync(ct));
                 SetSplitTunnel(await control.GetSplitTunnelAsync(ct));
                 SetProfiles(await control.GetProfilesAsync(ct));
+                SetUpdate(await control.GetUpdateInfoAsync(ct));
 
                 await rpc.Completion.WaitAsync(ct);
             }
@@ -164,6 +177,7 @@ public sealed class ServiceConnection : IAsyncDisposable
             SetNetworks(NetworkSnapshot.Empty);
             SetSplitTunnel(SplitTunnelInfo.Empty);
             SetProfiles(ProfilesInfo.Empty);
+            SetUpdate(UpdateInfo.Empty);
             try { await Task.Delay(RetryDelay, ct); } catch (OperationCanceledException) { break; }
         }
     }
