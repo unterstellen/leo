@@ -54,17 +54,20 @@ public sealed partial class UpdatesViewModel : ObservableObject
         var connected = _connection.State == ConnectionState.Connected;
         var full = _connection.Access == ClientAccess.Full;
         var running = u.State is UpdateState.Checking or UpdateState.Downloading or UpdateState.Verifying or UpdateState.Installing;
+        var on = u.State != UpdateState.Off; // official build or code-signed (LEO.md §26); off = development build
 
         SignedText = !connected ? "LEO's service isn't connected."
-            : u.Signed ? $"Signed by {u.Signer}" : "Development build (not signed): updates are off.";
-        StateText = connected && u.Signed ? u.StateText : ""; // dev builds: SignedText already says updates are off
+            : u.Signed ? $"Signed by {u.Signer}"
+            : on ? "Preview build, not code-signed. Updates are checked with LEO's own update key."
+            : "Development build (not signed): updates are off.";
+        StateText = connected && on ? u.StateText : ""; // dev builds: SignedText already says updates are off
         LastCheckText = u.LastCheck is { } t ? $"Last checked {t.LocalDateTime:g}" : "";
         AutoCheck = u.AutoCheck;
         AutoInstall = u.AutoInstall;
         Canary = u.Channel == "canary";
-        CanEdit = connected && full && u.Signed && !IsBusy;
-        CanCheck = connected && u.Signed && !running && !IsBusy;
-        ShowUpdateNow = connected && u.Signed && u.LatestVersion is not null && u.State is UpdateState.Available or UpdateState.Failed;
+        CanEdit = connected && full && on && !IsBusy;
+        CanCheck = connected && on && !running && !IsBusy;
+        ShowUpdateNow = connected && on && u.LatestVersion is not null && u.State is UpdateState.Available or UpdateState.Failed;
         CanUpdateNow = ShowUpdateNow && full && !running && !IsBusy;
         AdminHint = ShowUpdateNow && !full ? "Ask an administrator to update LEO." : null;
         HasAdminHint = AdminHint is not null;

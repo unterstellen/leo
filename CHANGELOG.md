@@ -17,4 +17,5 @@ The first public release (Preview).
 - **VPN coexistence:** choose the network a VPN uses, send apps into or around a VPN, kill-switch detection.
 - **Bonding:** spread connections across several networks.
 - **Installer:** one admin prompt, self-contained (nothing to install first), start at login for every user, uninstall puts Windows networking back and removes all settings.
-- **Updates:** silent automatic updates from GitHub Releases, signature-checked; can be switched off.
+- **Updates:** silent automatic updates from GitHub Releases, checked against LEO's own update signature; can be switched off.
+- **Not code-signed yet:** Windows shows *Unknown publisher*, and Smart App Control blocks LEO where it's on (see the README).

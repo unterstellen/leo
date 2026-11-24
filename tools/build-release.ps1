@@ -23,11 +23,16 @@
 
 .PARAMETER MsiOnly
   Only build the MSI from an existing artifactselease\payload (the release workflow, after signing the payload).
+
+.PARAMETER Official
+  Release workflow only: marks the build as official (-p:LeoOfficialBuild=true), so it updates itself with LEO's
+  own update key (LEO.md §26). Local test builds leave it off and never update themselves.
 #>
 param(
     [string]$Version,
     [switch]$SkipMsi,
-    [switch]$MsiOnly
+    [switch]$MsiOnly,
+    [switch]$Official
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -51,6 +56,7 @@ if (-not $MsiOnly) {
 # ── 1. Publish ───────────────────────────────────────────────────────────────
 Remove-Item -Recurse -Force $appOut, $svcOut, $payload -ErrorAction SilentlyContinue
 $common = @('-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-p:PublishReadyToRun=true', '-nologo')
+if ($Official) { $common += '-p:LeoOfficialBuild=true' }
 dotnet publish (Join-Path $root 'src\LEO.Service\LEO.Service.csproj') @common -o $svcOut
 if ($LASTEXITCODE -ne 0) { throw 'Publishing LEO.Service failed.' }
 dotnet publish (Join-Path $root 'src\LEO.App\LEO.App.csproj') @common -o $appOut

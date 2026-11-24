@@ -147,7 +147,7 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
         Mutate(nameof(InstallUpdateAsync), () =>
         {
             var info = Updates.Info;
-            if (!info.Signed) throw new InvalidOperationException("This is a development build, so it doesn't install updates.");
+            if (info.State == UpdateState.Off) throw new InvalidOperationException("This is a development build, so it doesn't install updates.");
             if (info.LatestVersion is null) throw new InvalidOperationException("No update was found. Check for updates first.");
             _ = Task.Run(async () =>
             {
