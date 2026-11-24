@@ -85,10 +85,16 @@ public partial class App : Application
         _window.CloseRequested += (_, e) =>
         {
             // Closing the window only hides it; LEO keeps living in the tray.
+            // Hide AFTER the Closing event has returned: hiding the window from inside its own Closing handler made
+            // WinUI fail with a stowed exception in CoreMessagingXP.dll (0xc000027b), which ended the whole app
+            // (Windows event log, 2026-11-20 to 2026-11-24).
             if (!_exiting)
             {
                 e.Cancel = true;
-                _window.Hide();
+                _dispatcher?.TryEnqueue(() =>
+                {
+                    if (!_exiting) _window?.Hide();
+                });
             }
         };
 
