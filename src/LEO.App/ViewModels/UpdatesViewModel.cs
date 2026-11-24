@@ -57,7 +57,7 @@ public sealed partial class UpdatesViewModel : ObservableObject
 
         SignedText = !connected ? "LEO's service isn't connected."
             : u.Signed ? $"Signed by {u.Signer}" : "Development build (not signed): updates are off.";
-        StateText = connected ? u.StateText : "";
+        StateText = connected && u.Signed ? u.StateText : ""; // dev builds: SignedText already says updates are off
         LastCheckText = u.LastCheck is { } t ? $"Last checked {t.LocalDateTime:g}" : "";
         AutoCheck = u.AutoCheck;
         AutoInstall = u.AutoInstall;

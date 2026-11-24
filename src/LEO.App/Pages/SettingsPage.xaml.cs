@@ -38,15 +38,20 @@ public sealed partial class SettingsPage : Page
     // ── Updates (M8) ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// A switch the user flipped. The switches show the service's settings one-way; a refresh that sets IsOn to the
-    /// value the service already has is not a user action, so it's ignored here.
+    /// A switch the user flipped. The switches show the service's settings one-way, and a refresh also raises Toggled:
+    /// while two values change, one switch already shows the new value and the other still the old one. So only the
+    /// switch that fired counts, compared with that one setting; a refresh sets it to the value the service already
+    /// has and is ignored (found live in M8: a refresh had saved "check automatically" as off).
     /// </summary>
     private async void UpdateSetting_Toggled(object sender, RoutedEventArgs e)
     {
-        var autoCheck = AutoCheckSwitch.IsOn;
-        var autoInstall = AutoInstallSwitch.IsOn;
-        var canary = CanarySwitch.IsOn;
-        if (autoCheck == Updates.AutoCheck && autoInstall == Updates.AutoInstall && canary == Updates.Canary) return;
+        if (sender is not ToggleSwitch sw) return;
+        bool autoCheck = Updates.AutoCheck, autoInstall = Updates.AutoInstall, canary = Updates.Canary;
+        if (ReferenceEquals(sw, AutoCheckSwitch)) { if (sw.IsOn == autoCheck) return; autoCheck = sw.IsOn; }
+        else if (ReferenceEquals(sw, AutoInstallSwitch)) { if (sw.IsOn == autoInstall) return; autoInstall = sw.IsOn; }
+        else if (ReferenceEquals(sw, CanarySwitch)) { if (sw.IsOn == canary) return; canary = sw.IsOn; }
+        else return;
+        if (!Updates.CanEdit) return; // never save from a disabled switch
         try { await Updates.SaveSettingsAsync(autoCheck, autoInstall, canary); }
         catch (Exception ex) { Updates.ErrorText = ex.Message; }
     }
