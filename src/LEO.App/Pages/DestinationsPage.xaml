@@ -83,6 +83,8 @@
                                     <TextBlock Text="{x:Bind DetailText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
                                                Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
                                     <TextBlock Text="{x:Bind RouteText, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <CheckBox Content="Active" MinWidth="0" IsChecked="{x:Bind IsEnabled, Mode=OneWay}"
+                                              Click="Enabled_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}" />
                                 </StackPanel>
 
                                 <controls:WrapPanel Grid.Row="1" Grid.Column="1" HorizontalSpacing="6" VerticalSpacing="6">
@@ -101,8 +103,6 @@
                                             <FontIcon Glyph="&#xE70D;" FontSize="10" />
                                         </StackPanel>
                                     </Button>
-                                    <CheckBox Content="Active" MinWidth="0" IsChecked="{x:Bind IsEnabled, Mode=OneWay}"
-                                              Click="Enabled_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}" />
                                     <Button Click="Edit_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}" AutomationProperties.Name="Edit rule">
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <FontIcon Glyph="&#xE70F;" FontSize="14" />

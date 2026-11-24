@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LEO's small installer UI (LEO.md §24.2): welcome (system-change note, licence line, "Start LEO at login"),
+  progress, finish ("Open LEO now"). No licence-acceptance page: the GPL needs no acceptance, LICENSE is installed.
+  Plus the dialogs Windows Installer needs: error, files in use (Restart Manager), cancel, user exit, fatal error,
+  and a remove page when LEO is already installed. No em dashes in UI text.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <UI Id="LeoUi">
+      <TextStyle Id="LeoFont" FaceName="Segoe UI" Size="9" />
+      <TextStyle Id="LeoTitle" FaceName="Segoe UI" Size="14" Bold="yes" />
+      <Property Id="DefaultUIFont" Value="LeoFont" />
+      <Property Id="ErrorDialog" Value="ErrorDlg" />
+
+      <Dialog Id="WelcomeDlg" Width="370" Height="270" Title="LEO Setup">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="24" Transparent="yes" NoPrefix="yes"
+                 Text="{\LeoTitle}LEO [ProductVersion] (Preview)" />
+        <Control Id="Body" Type="Text" X="20" Y="54" Width="330" Height="80" Transparent="yes" NoPrefix="yes"
+                 Text="LEO manages your networks: which one is primary, failover, Wi-Fi, split tunneling and bonding.&#13;&#10;&#13;&#10;LEO installs a background service and, while split tunneling is on, a virtual network adapter named LEO.&#13;&#10;&#13;&#10;LEO is free software, GPL-3.0-or-later. It has no accounts, no telemetry and no servers." />
+        <Control Id="Folder" Type="Text" X="20" Y="140" Width="330" Height="24" Transparent="yes" NoPrefix="yes"
+                 Text="Install folder: [INSTALLFOLDER]" />
+        <Control Id="LoginStart" Type="CheckBox" X="20" Y="172" Width="330" Height="17" Property="LEO_LOGIN_UI" CheckBoxValue="1"
+                 Text="Start LEO at login (each user can turn this off in LEO's Settings)" />
+        <Control Id="Line" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Install" Type="PushButton" X="212" Y="243" Width="70" Height="17" Default="yes" ElevationShield="yes" Text="Install">
+          <Publish Property="START_AT_LOGIN" Value="1" Condition="LEO_LOGIN_UI" />
+          <Publish Property="START_AT_LOGIN" Value="0" Condition="NOT LEO_LOGIN_UI" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="290" Y="243" Width="62" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="RemoveDlg" Width="370" Height="270" Title="LEO Setup">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="24" Transparent="yes" NoPrefix="yes"
+                 Text="{\LeoTitle}Remove LEO" />
+        <Control Id="Body" Type="Text" X="20" Y="54" Width="330" Height="80" Transparent="yes" NoPrefix="yes"
+                 Text="LEO [ProductVersion] is installed.&#13;&#10;&#13;&#10;Removing it stops the service, puts Windows networking back the way it was and deletes all of LEO's settings, statistics and logs for every user of this PC." />
+        <Control Id="Line" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Remove" Type="PushButton" X="212" Y="243" Width="70" Height="17" Default="yes" ElevationShield="yes" Text="Remove">
+          <Publish Property="REMOVE" Value="ALL" />
+          <Publish Event="Remove" Value="ALL" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="290" Y="243" Width="62" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ProgressDlg" Width="370" Height="270" Title="LEO Setup" Modeless="yes">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Text="{\LeoTitle}Working" />
+        <Control Id="Body" Type="Text" X="20" Y="54" Width="330" Height="30" Transparent="yes" NoPrefix="yes"
+                 Text="Please wait while LEO is set up. Your network connection may pause for a moment." />
+        <Control Id="ActionText" Type="Text" X="20" Y="100" Width="330" Height="17" NoPrefix="yes">
+          <Subscribe Event="ActionText" Attribute="Text" />
+        </Control>
+        <Control Id="Progress" Type="ProgressBar" X="20" Y="120" Width="330" Height="12" ProgressBlocks="yes" Text="Progress">
+          <Subscribe Event="SetProgress" Attribute="Progress" />
+        </Control>
+        <Control Id="Line" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Cancel" Type="PushButton" X="290" Y="243" Width="62" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ExitDlg" Width="370" Height="270" Title="LEO Setup">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Text="{\LeoTitle}Done" />
+        <Control Id="Installed" Type="Text" X="20" Y="54" Width="330" Height="40" Transparent="yes" NoPrefix="yes" HideCondition="Installed"
+                 Text="LEO is installed. You find it in the Start menu and, while it runs, in the system tray." />
+        <Control Id="Removed" Type="Text" X="20" Y="54" Width="330" Height="40" Transparent="yes" NoPrefix="yes" HideCondition="NOT Installed"
+                 Text="LEO was removed." />
+        <Control Id="Launch" Type="CheckBox" X="20" Y="110" Width="330" Height="17" Property="LAUNCH_LEO" CheckBoxValue="1"
+                 Text="Open LEO now" HideCondition="Installed" />
+        <Control Id="Line" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Finish" Type="PushButton" X="290" Y="243" Width="62" Height="17" Default="yes" Cancel="yes" Text="Finish">
+          <Publish Event="DoAction" Value="LeoLaunch" Condition="LAUNCH_LEO AND NOT Installed" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="UserExitDlg" Width="370" Height="270" Title="LEO Setup">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Text="{\LeoTitle}Stopped" />
+        <Control Id="Body" Type="Text" X="20" Y="54" Width="330" Height="40" Transparent="yes" NoPrefix="yes"
+                 Text="Setup was stopped. Nothing was changed on this PC." />
+        <Control Id="Line" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Finish" Type="PushButton" X="290" Y="243" Width="62" Height="17" Default="yes" Cancel="yes" Text="Finish">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="FatalErrorDlg" Width="370" Height="270" Title="LEO Setup">
+        <Control Id="Title" Type="Text" X="20" Y="20" Width="330" Height="24" Transparent="yes" NoPrefix="yes" Text="{\LeoTitle}Setup failed" />
+        <Control Id="Body" Type="Text" X="20" Y="54" Width="330" Height="60" Transparent="yes" NoPrefix="yes"
+                 Text="Setup couldn't finish, so it put everything back as it was. The previous version of LEO, if there was one, is still installed." />
+        <Control Id="Line" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Finish" Type="PushButton" X="290" Y="243" Width="62" Height="17" Default="yes" Cancel="yes" Text="Finish">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="CancelDlg" Width="260" Height="85" Title="LEO Setup" NoMinimize="yes">
+        <Control Id="Text" Type="Text" X="15" Y="15" Width="230" Height="30" Transparent="yes" NoPrefix="yes" Text="Stop setting up LEO?" />
+        <Control Id="Yes" Type="PushButton" X="110" Y="57" Width="62" Height="17" Text="Stop">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="No" Type="PushButton" X="182" Y="57" Width="62" Height="17" Default="yes" Cancel="yes" Text="Continue">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ErrorDlg" Width="270" Height="105" Title="LEO Setup" ErrorDialog="yes">
+        <Control Id="ErrorText" Type="Text" X="15" Y="15" Width="240" Height="60" TabSkip="no" NoPrefix="yes" Text="Information text" />
+        <Control Id="Y" Type="PushButton" X="100" Y="80" Width="56" Height="17" TabSkip="yes" Text="Yes"><Publish Event="EndDialog" Value="ErrorYes" /></Control>
+        <Control Id="A" Type="PushButton" X="100" Y="80" Width="56" Height="17" TabSkip="yes" Text="Cancel"><Publish Event="EndDialog" Value="ErrorAbort" /></Control>
+        <Control Id="C" Type="PushButton" X="100" Y="80" Width="56" Height="17" TabSkip="yes" Text="Cancel"><Publish Event="EndDialog" Value="ErrorCancel" /></Control>
+        <Control Id="I" Type="PushButton" X="100" Y="80" Width="56" Height="17" TabSkip="yes" Text="Ignore"><Publish Event="EndDialog" Value="ErrorIgnore" /></Control>
+        <Control Id="N" Type="PushButton" X="100" Y="80" Width="56" Height="17" TabSkip="yes" Text="No"><Publish Event="EndDialog" Value="ErrorNo" /></Control>
+        <Control Id="O" Type="PushButton" X="100" Y="80" Width="56" Height="17" TabSkip="yes" Text="OK"><Publish Event="EndDialog" Value="ErrorOk" /></Control>
+        <Control Id="R" Type="PushButton" X="100" Y="80" Width="56" Height="17" TabSkip="yes" Text="Retry"><Publish Event="EndDialog" Value="ErrorRetry" /></Control>
+      </Dialog>
+
+      <!-- LEO.exe is open during an install with the full UI: Restart Manager closes it and starts it again afterwards. -->
+      <Dialog Id="MsiRMFilesInUse" Width="300" Height="160" Title="LEO Setup" KeepModeless="yes">
+        <Control Id="Text" Type="Text" X="15" Y="15" Width="270" Height="30" Transparent="yes" NoPrefix="yes"
+                 Text="These programs are using files LEO needs to update. Setup closes them and starts LEO again afterwards." />
+        <Control Id="List" Type="ListBox" X="15" Y="50" Width="270" Height="70" Property="FileInUseProcess" Sunken="yes" TabSkip="yes" />
+        <Control Id="OK" Type="PushButton" X="155" Y="133" Width="62" Height="17" Default="yes" Text="Continue">
+          <Publish Event="RMShutdownAndRestart" Value="0" />
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="223" Y="133" Width="62" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="FilesInUse" Width="300" Height="160" Title="LEO Setup" KeepModeless="yes">
+        <Control Id="Text" Type="Text" X="15" Y="15" Width="270" Height="30" Transparent="yes" NoPrefix="yes"
+                 Text="These programs are using files LEO needs to update. Close them, then choose Retry." />
+        <Control Id="List" Type="ListBox" X="15" Y="50" Width="270" Height="70" Property="FileInUseProcess" Sunken="yes" TabSkip="yes" />
+        <Control Id="Retry" Type="PushButton" X="87" Y="133" Width="62" Height="17" Default="yes" Text="Retry">
+          <Publish Event="EndDialog" Value="Retry" />
+        </Control>
+        <Control Id="Ignore" Type="PushButton" X="155" Y="133" Width="62" Height="17" Text="Ignore">
+          <Publish Event="EndDialog" Value="Ignore" />
+        </Control>
+        <Control Id="Exit" Type="PushButton" X="223" Y="133" Width="62" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <InstallUISequence>
+        <Show Dialog="WelcomeDlg" After="CostFinalize" Condition="NOT Installed" />
+        <Show Dialog="RemoveDlg" After="WelcomeDlg" Condition="Installed" />
+        <Show Dialog="ProgressDlg" Before="ExecuteAction" />
+        <Show Dialog="ExitDlg" OnExit="success" />
+        <Show Dialog="UserExitDlg" OnExit="cancel" />
+        <Show Dialog="FatalErrorDlg" OnExit="error" />
+      </InstallUISequence>
+      <AdminUISequence>
+        <Show Dialog="ExitDlg" OnExit="success" />
+        <Show Dialog="UserExitDlg" OnExit="cancel" />
+        <Show Dialog="FatalErrorDlg" OnExit="error" />
+      </AdminUISequence>
+    </UI>
+  </Fragment>
+</Wix>

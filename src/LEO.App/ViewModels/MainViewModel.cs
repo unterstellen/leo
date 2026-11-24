@@ -18,7 +18,7 @@ public sealed partial class MainViewModel : ObservableObject
         _dispatcher = dispatcher;
         _loading = true;
         ApplyStartAtLoginDefault();
-        StartAtLogin = StartupManager.IsEnabled;
+        StartAtLogin = StartupManager.IsEnabled(Ui.StartAtLogin);
         _loading = false;
         _connection.Changed += (_, _) => _dispatcher.TryEnqueue(Refresh);
         _connection.SplitTunnelChanged += (_, _) => _dispatcher.TryEnqueue(Refresh);
@@ -67,19 +67,25 @@ public sealed partial class MainViewModel : ObservableObject
             Ui.StartAtLogin = value; // the user's choice from now on
             Ui.Save();
         }
-        catch { StartAtLogin = StartupManager.IsEnabled; }
+        catch { StartAtLogin = StartupManager.IsEnabled(Ui.StartAtLogin); }
     }
 
     /// <summary>
-    /// "Start at login" is on by default: on first launch (no choice saved) the app registers itself to start in the
-    /// tray at login. If it's on but points at another copy of LEO.exe (moved/rebuilt elsewhere), it's re-pointed here.
+    /// "Start at login" is on by default. Installed by the MSI with its machine-wide entry: nothing to register, only an
+    /// old HKCU value is removed (LEO.md §24.2). Otherwise, on first launch (no choice saved) the app registers itself to
+    /// start in the tray at login; if it's on but points at another copy of LEO.exe, it's re-pointed here.
     /// A user who turned it off keeps it off.
     /// </summary>
     private void ApplyStartAtLoginDefault()
     {
         try
         {
-            if (Ui.StartAtLogin == false || StartupManager.IsEnabled) return;
+            if (StartupManager.UsesMachineEntry)
+            {
+                StartupManager.RemoveStaleUserEntry();
+                return;
+            }
+            if (Ui.StartAtLogin == false || StartupManager.IsEnabled(Ui.StartAtLogin)) return;
             StartupManager.SetEnabled(true);
             if (Ui.StartAtLogin is null)
             {

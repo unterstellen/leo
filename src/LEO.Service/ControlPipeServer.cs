@@ -19,6 +19,13 @@ public sealed class ControlPipeServer(
     /// <summary>Pipe name; overridable so tests can run a private instance.</summary>
     public string PipeName { get; init; } = LeoInfo.ControlPipeName;
 
+    /// <summary>The pipe-client signature check (LEO.md §24.6); tests inject their own.</summary>
+    public Leo.Service.Security.ClientTrust Trust { get; init; } = Leo.Service.Security.ClientTrust.ForThisService();
+
+    /// <summary>Our pipe instances alive right now (listening + sessions). With none, the next one must be the first.</summary>
+    private int _liveInstances;
+    private bool _squatterLogged;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _log.LogInformation(@"Control pipe listening on \\.\pipe\{Pipe}", PipeName);
@@ -28,7 +35,21 @@ public sealed class ControlPipeServer(
             NamedPipeServerStream? pipe = null;
             try
             {
-                pipe = PipeTransport.CreateServerStream(PipeName);
+                var first = Volatile.Read(ref _liveInstances) == 0;
+                try
+                {
+                    pipe = PipeTransport.CreateServerStream(PipeName, firstInstance: first);
+                }
+                catch (Exception ex) when (first && ex is UnauthorizedAccessException or IOException)
+                {
+                    // Another program created \\.\pipe\LEO.Control before us: never share the name with it (LEO.md §24.6).
+                    if (!_squatterLogged) _log.LogError("Another program already owns the control pipe name; LEO's UI can't connect until it's gone ({Message})", ex.Message);
+                    _squatterLogged = true;
+                    await Task.Delay(5000, stoppingToken);
+                    continue;
+                }
+                Interlocked.Increment(ref _liveInstances);
+                _squatterLogged = false;
                 await pipe.WaitForConnectionAsync(stoppingToken);
                 var session = pipe;
                 pipe = null; // ownership moves to the session task
@@ -55,7 +76,11 @@ public sealed class ControlPipeServer(
             }
             finally
             {
-                if (pipe is not null) await pipe.DisposeAsync();
+                if (pipe is not null)
+                {
+                    await pipe.DisposeAsync();
+                    Interlocked.Decrement(ref _liveInstances);
+                }
             }
         }
     }
@@ -63,11 +88,22 @@ public sealed class ControlPipeServer(
     private async Task ServeAsync(NamedPipeServerStream pipe, CancellationToken stoppingToken)
     {
         await using var _ = pipe;
-        var client = ClientIdentity.FromPipe(pipe);
-        _log.LogInformation("Client connected: pid={Pid} user={User} image={Image} access={Access}",
-            client.ProcessId, client.UserName, client.ImagePath, client.Access);
+        try
+        {
+            await ServeCoreAsync(pipe, stoppingToken);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _liveInstances);
+        }
+    }
 
-        // TODO(M8): reject clients whose image is not Authenticode-signed by INFERSTELLEN/UNTERSTELLEN.
+    private async Task ServeCoreAsync(NamedPipeServerStream pipe, CancellationToken stoppingToken)
+    {
+        // Signed builds: a client that isn't LEO's own signed LEO.exe from the install folder is read-only (LEO.md §24.6).
+        var (client, trust) = Trust.Apply(ClientIdentity.FromPipe(pipe));
+        _log.LogInformation("Client connected: pid={Pid} user={User} image={Image} access={Access} ({Trust})",
+            client.ProcessId, client.UserName, client.ImagePath, client.Access, Leo.Core.Security.ClientTrustPolicy.Describe(trust));
 
         using var target = new LeoControlTarget(status, networks, client, loggers.CreateLogger<LeoControlTarget>(), wifi, hub, splitTunnel, profiles, stats);
         using var rpc = PipeTransport.CreateRpc(pipe);

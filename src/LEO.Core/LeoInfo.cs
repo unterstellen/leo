@@ -16,15 +16,33 @@ public static class LeoInfo
     public const string LicenseUrl = "https://www.gnu.org/licenses/gpl-3.0.html";
 
     /// <summary>Public source repository; releases here are LEO's update channel (LEO.md §9).</summary>
-    public const string RepositoryUrl = "https://github.com/unterstellen/leo-windows";
+    public const string RepositoryUrl = "https://github.com/unterstellen/leo";
     public const string ReleasesUrl = RepositoryUrl + "/releases";
-    public const string LatestReleaseApi = "https://api.github.com/repos/unterstellen/leo-windows/releases/latest";
+    public const string LatestReleaseApi = "https://api.github.com/repos/unterstellen/leo/releases/latest";
 
     /// <summary>Windows service name (sc.exe / services.msc).</summary>
     public const string ServiceName = "LEO";
     public const string ServiceDisplayName = "LEO Network Engine";
     public const string ServiceDescription =
         "LEO multi-network manager and split-tunneling engine by UNTERSTELLEN.";
+
+    /// <summary>
+    /// AppUserModelID of the unpackaged app: set by LEO.exe at start and on the MSI's Start menu shortcut, so toasts
+    /// and the taskbar group belong to LEO (LEO.md §24.2).
+    /// </summary>
+    public const string AppUserModelId = "UNTERSTELLEN.LEO";
+
+    /// <summary>HKLM\SOFTWARE\UNTERSTELLEN\LEO: machine-wide values set by an administrator.</summary>
+    public const string MachineRegistryKey = @"SOFTWARE\UNTERSTELLEN\LEO";
+
+    /// <summary>
+    /// DWORD under <see cref="MachineRegistryKey"/>: 1 turns the pipe-client signature check off on a signed install
+    /// (developers, opt-in live tests; LEO.md §24.6).
+    /// </summary>
+    public const string AllowUnsignedClientsValue = "AllowUnsignedClients";
+
+    /// <summary>HKLM/HKCU Run value name for "Start LEO at login" (the MSI writes the HKLM one, LEO.md §24.2).</summary>
+    public const string RunValueName = "LEO";
 
     /// <summary>Named pipe the service listens on (\.\pipe\LEO.Control).</summary>
     public const string ControlPipeName = "LEO.Control";

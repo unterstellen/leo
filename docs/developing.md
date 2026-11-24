@@ -81,7 +81,7 @@ Then, depending on what you changed:
 
 - **Your real network is the test bench.** The deployed service really changes interface priorities and, with split tunneling on, routing. If the internet acts up: **Uninstall service** hands everything back to Windows.
 - The app adds itself to "start at login" the first time it runs (pointing at your Debug build). Turn it off in LEO's Settings if you don't want that.
-- The project rules for UI code: actions only from Click handlers, one dialog at a time, nothing that silently ignores a click (show it disabled instead), no em dashes in UI text.
+- The project rules for UI code: actions only from Click handlers, one dialog at a time, nothing that silently ignores a click (show it disabled instead), no em dashes in UI text. Cards and list rows are laid out top to bottom: the main information first (name, details, "Now:"), checkboxes on their own row below it, buttons on the last row.
 - `bin\`, `obj\`, `artifacts\` and Rider's `.idea\` folder are never committed.
 
 ## 9. The same without an IDE

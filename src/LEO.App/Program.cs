@@ -18,8 +18,17 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
-        WinRT.ComWrappersSupport.InitializeComWrappers();
+        // DLLs only from System32 and the install folder (LEO.md §24.6).
+        Leo.Core.Security.DllSearch.Restrict();
+        // The Start menu shortcut carries the same AppUserModelID, so toasts and the taskbar group are LEO's (§24.2).
+        SetCurrentProcessExplicitAppUserModelID(Leo.Core.LeoInfo.AppUserModelId);
+
         StartInTray = args.Contains(StartupManager.TrayArgument, StringComparer.OrdinalIgnoreCase);
+
+        // The MSI's machine-wide login entry starts LEO for every user; a user who switched it off exits here (§24.2).
+        if (StartupManager.ShouldExitAtTrayStart(Services.UiSettings.Load().StartAtLogin, StartInTray)) return 0;
+
+        WinRT.ComWrappersSupport.InitializeComWrappers();
 
         var instance = AppInstance.FindOrRegisterForKey(InstanceKey);
         if (!instance.IsCurrent)
@@ -30,6 +39,10 @@ public static class Program
             return 0;
         }
 
+        // An update (MSI + Restart Manager) closes LEO and starts it again in the tray afterwards (§24.2).
+        // Only restarts asked for by Restart Manager: not after a crash, a hang or a reboot.
+        RegisterApplicationRestart(StartupManager.TrayArgument, RestartNoCrash | RestartNoHang | RestartNoReboot);
+
         Application.Start(_ =>
         {
             SynchronizationContext.SetSynchronizationContext(
@@ -39,4 +52,14 @@ public static class Program
         });
         return 0;
     }
+
+    private const int RestartNoCrash = 1;
+    private const int RestartNoHang = 2;
+    private const int RestartNoReboot = 8;
+
+    [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int RegisterApplicationRestart(string commandLine, int flags);
 }

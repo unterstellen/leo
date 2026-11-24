@@ -32,6 +32,15 @@ if ($Action -eq 'logs') {
     return
 }
 
+# An MSI-installed LEO owns the service (LEO.md §24.9): don't deploy a dev build over it.
+if ($Action -in 'deploy', 'uninstall') {
+    $msiService = Join-Path $env:ProgramFiles 'UNTERSTELLEN\LEO\LEO.Service.exe'
+    $imagePath = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\LEO' -ErrorAction SilentlyContinue).ImagePath
+    if ($imagePath -and $imagePath.Trim('"') -ieq $msiService) {
+        throw "LEO is installed from the MSI. Uninstall it first (Settings > Apps > Installed apps > LEO), then deploy the dev build."
+    }
+}
+
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 

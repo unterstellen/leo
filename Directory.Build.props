@@ -6,7 +6,7 @@
     <Copyright>© 2026 INFERSTELLEN (inferstellen.com). Published by UNTERSTELLEN (unterstellen.org).</Copyright>
     <Version>0.1.0</Version>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/unterstellen/leo-windows</RepositoryUrl>
+    <RepositoryUrl>https://github.com/unterstellen/leo</RepositoryUrl>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -15,5 +15,31 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- LEO is English only: no satellite resource folders (cs, de, ...) from NuGet packages (LEO.md §24.1). -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
+  <!--
+    Release payload (LEO.md §24.1): `dotnet publish` makes self-contained, ReadyToRun builds, so nothing has to be
+    installed first. Only while publishing: plain builds and tests stay framework-dependent and fast.
+    No trimming, no single-file, no Native AOT (WinUI XAML, StreamJsonRpc and System.Text.Json use reflection).
+    CI passes -p:Version=<x.y.z> from the tag; local builds keep the Version above.
+  -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <SelfContained>true</SelfContained>
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishSingleFile>false</PublishSingleFile>
+  </PropertyGroup>
+  <!--
+    ReadyToRun only for LEO's own assemblies. Crossgen rewrites every library it compiles, which drops the
+    publisher's Authenticode signature (found in the M8 build: Microsoft.Extensions.*, StreamJsonRpc, the Windows App
+    SDK projections... all became unsigned). Third-party files keep their upstream signatures; LEO's own are signed by
+    the release workflow anyway (LEO.md §24.3).
+  -->
+  <Target Name="LeoReadyToRunOwnAssembliesOnly" BeforeTargets="_PrepareForReadyToRunCompilation" Condition="'$(PublishReadyToRun)' == 'true'">
+    <ItemGroup>
+      <PublishReadyToRunExclude Include="@(ResolvedFileToPublish->'%(Filename)%(Extension)')"
+                                Condition="'%(Extension)' == '.dll' and !$([System.String]::Copy('%(Filename)').StartsWith('LEO'))" />
+    </ItemGroup>
+  </Target>
 </Project>
