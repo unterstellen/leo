@@ -87,6 +87,9 @@ public enum NotificationKind
     SplitTunnelResumed = 10,
     RoutesTampered = 11,       // another program keeps removing LEO's routes
     BondMemberLost = 12,       // a network in a bond in use stopped working (M7)
+    UpdateAvailable = 13,      // automatic installing is off: "Update now" (M8)
+    UpdateFailed = 14,         // a download, check or install failed (M8)
+    Updated = 15,              // shown by the UI once after an update installed (M8)
 }
 
 /// <summary>Something the user should hear about; the tray app shows it as a Windows notification.</summary>

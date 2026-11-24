@@ -168,6 +168,23 @@ public interface ILeoControl
 
     /// <summary>Per-member connection counts and engine health of each bond in use. Poll while the Bonding page is open.</summary>
     Task<BondsLiveInfo> GetBondsLiveAsync(CancellationToken cancellationToken = default);
+
+    // ── Updates (M8, protocol 11) ─────────────────────────────────────────────
+
+    /// <summary>Installed version, signer, update state and settings.</summary>
+    Task<UpdateInfo> GetUpdateInfoAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>"Check now": asks GitHub right away (any user; it only reads). Returns the new state.</summary>
+    Task<UpdateInfo> CheckForUpdatesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>"Update now": download, verify and install the version found. Full access.</summary>
+    Task InstallUpdateAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Settings → Updates. Channel "stable" or "canary". Full access.</summary>
+    Task SetUpdateSettingsAsync(bool autoCheck, bool autoInstall, string channel, CancellationToken cancellationToken = default);
+
+    /// <summary>The update state changed (checking, available, downloading, installing, failed…).</summary>
+    event EventHandler<UpdateInfo>? UpdateChanged;
 }
 
 public sealed record HelloRequest(int ProtocolVersion, string ClientName, string ClientVersion);

@@ -54,6 +54,10 @@ builder.Services.AddSingleton(sp => new Leo.Service.Stats.StatsCollector(
     sp.GetRequiredService<ILogger<Leo.Service.Stats.StatsCollector>>(),
     sp.GetRequiredService<Leo.Service.SplitTunnel.SplitTunnelManager>(), sp.GetRequiredService<Leo.Service.SplitTunnel.ChildProcessTracker>()));
 
+builder.Services.AddSingleton(sp => new Leo.Service.Updates.UpdateService(
+    sp.GetRequiredService<ConfigStore>(), sp.GetRequiredService<NotificationHub>(),
+    sp.GetRequiredService<ILogger<Leo.Service.Updates.UpdateService>>()));
+
 builder.Services.AddHostedService<EngineHeartbeat>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NetworkManager>());
 builder.Services.AddHostedService(sp =>
@@ -68,6 +72,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<VpnMonitor>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.SplitTunnel.SplitTunnelManager>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.Profiles.ProfileManager>());
 builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.Stats.StatsCollector>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<Leo.Service.Updates.UpdateService>());
 builder.Services.AddHostedService<ControlPipeServer>();
 
 builder.Build().Run();

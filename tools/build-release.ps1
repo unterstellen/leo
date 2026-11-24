@@ -19,11 +19,15 @@
   x.y.z for the MSI and the binaries. Default: the <Version> in Directory.Build.props.
 
 .PARAMETER SkipMsi
-  Only build and check the payload.
+  Only build and check the payload (the release workflow signs it next).
+
+.PARAMETER MsiOnly
+  Only build the MSI from an existing artifactselease\payload (the release workflow, after signing the payload).
 #>
 param(
     [string]$Version,
-    [switch]$SkipMsi
+    [switch]$SkipMsi,
+    [switch]$MsiOnly
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -41,8 +45,9 @@ if ($parts[0] -gt 255 -or $parts[1] -gt 255 -or $parts[2] -gt 65535) {
     throw "Windows Installer allows major <= 255, minor <= 255, build <= 65535 (LEO.md §24.2)."
 }
 
-Write-Host "LEO ${Version}: unsigned test build" -ForegroundColor Yellow
+if (-not $MsiOnly) { Write-Host "LEO ${Version}: unsigned test build" -ForegroundColor Yellow }
 
+if (-not $MsiOnly) {
 # ── 1. Publish ───────────────────────────────────────────────────────────────
 Remove-Item -Recurse -Force $appOut, $svcOut, $payload -ErrorAction SilentlyContinue
 $common = @('-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-p:PublishReadyToRun=true', '-nologo')
@@ -98,6 +103,7 @@ Write-Host ("Payload: {0} files, {1:N1} MB; {2} PE files, {3} not signed (a rele
 $unsigned | ForEach-Object { Write-Host "  unsigned: $($_.File)" }
 
 if ($SkipMsi) { return }
+}
 
 # ── 5. MSI ───────────────────────────────────────────────────────────────────
 $msiOut = Join-Path $out 'msi'
@@ -108,4 +114,6 @@ Copy-Item (Join-Path $msiOut "LEO-$Version-x64.msi") $msi -Force
 $hash = (Get-FileHash $msi -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  LEO-$Version-x64.msi" | Set-Content (Join-Path $out 'SHA256SUMS.txt') -Encoding ascii
 Write-Host ("MSI: {0} ({1:N1} MB), SHA-256 {2}" -f $msi, ((Get-Item $msi).Length / 1MB), $hash) -ForegroundColor Green
-Write-Host 'Unsigned test build: Smart App Control blocks it. Install only on a test PC or VM, never as a release.' -ForegroundColor Yellow
+if (-not $MsiOnly) {
+    Write-Host 'Unsigned test build: Smart App Control blocks it. Install only on a test PC or VM, never as a release.' -ForegroundColor Yellow
+}

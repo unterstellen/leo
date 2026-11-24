@@ -1,0 +1,250 @@
+# LEO release (LEO.md §24.4). Triggered only by a pushed tag vX.Y.Z or vX.Y.Z-canary.N (the user tags).
+#
+#   check   → the tag is valid and its x.y.z is higher than every earlier tag's (Windows Installer rule, §24.2)
+#   engine  → mihomo built FROM SOURCE at the pinned tag + its corresponding source archive (GPL, §17)
+#   build   → tests WITH the source-built engine (mihomo -t runs), self-contained payload, clash check, PE list
+#   sign    → environment "release": WAITS FOR THE USER'S APPROVAL in GitHub, then signs the payload (LEO's own
+#             files + third-party files that arrive unsigned), builds the MSI from the signed files, signs the MSI,
+#             verifies every PE and the MSI
+#   release → a DRAFT GitHub release (MSI, SHA256SUMS.txt, mihomo source). The user tests it and publishes it by hand.
+#
+# Release gate (user's decision, §24.10 Q8): two clicks by the user, approve signing and publish the draft. With silent
+# automatic updates, a published release reaches every LEO PC within a day, so a person always looks first.
+#
+# Dry run (no signing, no release): Actions → Release → Run workflow. Builds everything up to an UNSIGNED MSI artifact.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to dry-run (vX.Y.Z); nothing is signed or released'
+        required: true
+        default: 'v0.1.0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+  ENGINE_TAG: v1.19.34 # keep in step with tools/get-engine.ps1 and tools/build-engine.ps1
+  TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  DRY_RUN: ${{ github.event_name != 'push' }}
+
+jobs:
+  check:
+    name: Check the tag
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      title: ${{ steps.tag.outputs.title }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # all tags, for the "higher than every earlier tag" rule
+      - id: tag
+        shell: pwsh
+        run: ./tools/check-tag.ps1 -Tag $env:TAG
+
+  engine:
+    name: Build the engine from source
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check out mihomo ${{ env.ENGINE_TAG }}
+        uses: actions/checkout@v5
+        with:
+          repository: MetaCubeX/mihomo
+          ref: ${{ env.ENGINE_TAG }}
+          path: artifacts/engine-src
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up Go (version from mihomo's go.mod)
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: artifacts/engine-src/go.mod
+          cache: false
+      - name: Build mihomo and pack its source
+        shell: pwsh
+        run: ./tools/build-engine.ps1 -Tag $env:ENGINE_TAG -UseExistingSource
+      - uses: actions/upload-artifact@v6
+        with:
+          name: engine
+          path: |
+            artifacts/engine/mihomo.exe
+            artifacts/engine/version.txt
+            artifacts/engine/build-info.txt
+            artifacts/release/mihomo-*-source.tar.gz
+          if-no-files-found: error
+
+  build:
+    name: Test and publish (unsigned payload)
+    needs: [check, engine]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v7
+        with:
+          name: engine
+          path: artifacts
+      # The artifact keeps its folder layout: artifacts/engine/mihomo.exe, artifacts/release/mihomo-…-source.tar.gz.
+      - name: Test (with the source-built engine, so EngineConfigCheckTests run mihomo -t)
+        run: dotnet test LEO.slnx -c Release
+      - name: Publish the payload (self-contained, clash check, PE list)
+        shell: pwsh
+        run: ./tools/build-release.ps1 -Version ${{ needs.check.outputs.version }} -SkipMsi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: payload
+          path: |
+            artifacts/release/payload/
+            artifacts/release/payload-signatures.txt
+          if-no-files-found: error
+
+  dry-run-msi:
+    name: Unsigned MSI (dry run only)
+    if: github.event_name != 'push'
+    needs: [check, build]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v7
+        with:
+          name: payload
+          path: artifacts/release
+      - shell: pwsh
+        run: ./tools/build-release.ps1 -Version ${{ needs.check.outputs.version }} -MsiOnly
+      - uses: actions/upload-artifact@v6
+        with:
+          name: unsigned-msi-dry-run
+          path: artifacts/release/LEO-*-x64.msi
+
+  sign:
+    name: Sign (waits for approval)
+    if: github.event_name == 'push'
+    needs: [check, build]
+    runs-on: windows-latest
+    # Required reviewer = the user (set in GitHub: Settings → Environments → release). Signing secrets live only here;
+    # forks and pull requests never see them.
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@v7
+        with:
+          name: payload
+          path: artifacts/release
+
+      - name: List the files to sign
+        shell: pwsh
+        run: |
+          # LEO's own binaries, mihomo, and every third-party PE that arrives unsigned (user's decision, §24.3).
+          # Files that are already validly signed (Microsoft runtime, Windows App SDK, most libraries) keep their
+          # upstream signature and are NOT re-signed.
+          $payload = Resolve-Path artifacts/release/payload
+          $files = Get-ChildItem $payload -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } |
+            Where-Object { $_.Name -like 'LEO*' -or (Get-AuthenticodeSignature $_.FullName).Status -ne 'Valid' }
+          $files.FullName | Set-Content artifacts/release/to-sign.txt
+          Write-Host "$($files.Count) file(s) to sign:"; $files | ForEach-Object { Write-Host "  $($_.FullName.Substring($payload.Path.Length))" }
+
+      # ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+      # │ PLACEHOLDER: SIGNING IS NOT SET UP YET. The certificate authority isn't chosen (LEO.md §24.3, §24.10 Q1).  │
+      # │ Until it is, a tag push stops HERE and no release is created: an unsigned LEO must never be published.    │
+      # │ When the CA is chosen, replace this step with the CA's signing action/CLI, e.g.:                          │
+      # │   - Azure Trusted Signing: azure/trusted-signing-action (OIDC login, no stored password)                 │
+      # │   - Certum SimplySign / an OV certificate in a cloud HSM: the vendor's CLI or signtool + PKCS#11           │
+      # │ Sign every file in artifacts/release/to-sign.txt with SHA-256 and an RFC 3161 timestamp:                  │
+      # │   signtool sign /fd SHA256 /tr <timestamp URL> /td SHA256 <…key options…> @files                          │
+      # │ and then the MSI in the "Sign the MSI" step below the same way.                                          │
+      # └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+      - name: Sign the payload (PLACEHOLDER, see above)
+        shell: pwsh
+        run: |
+          throw "Code signing isn't set up yet (LEO.md §24.3). No release was created. Use a dry run (Run workflow) to build an unsigned test MSI."
+
+      - name: Build the MSI from the signed payload
+        shell: pwsh
+        run: ./tools/build-release.ps1 -Version ${{ needs.check.outputs.version }} -MsiOnly
+
+      - name: Sign the MSI (PLACEHOLDER, same signing as above)
+        shell: pwsh
+        run: |
+          throw "Code signing isn't set up yet (LEO.md §24.3)."
+
+      - name: Verify every signature
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+          $targets = @(Get-ChildItem artifacts/release/payload -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' }) +
+                     @(Get-Item artifacts/release/LEO-*-x64.msi)
+          $bad = @()
+          foreach ($t in $targets) {
+            & $signtool.FullName verify /pa /all /q $t.FullName | Out-Null
+            if ($LASTEXITCODE -ne 0) { $bad += $t.FullName }
+          }
+          if ($bad.Count -gt 0) { $bad | ForEach-Object { Write-Host "NOT SIGNED: $_" }; throw "$($bad.Count) file(s) aren't validly signed." }
+          Write-Host "All $($targets.Count) files are signed."
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: signed-msi
+          path: |
+            artifacts/release/LEO-*-x64.msi
+            artifacts/release/SHA256SUMS.txt
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: [check, engine, sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # only this job may create the (draft) release
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
+        with:
+          name: signed-msi
+          path: out
+      - uses: actions/download-artifact@v7
+        with:
+          name: engine
+          path: engine
+      - name: Release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          $version = '${{ needs.check.outputs.version }}'
+          $text = Get-Content CHANGELOG.md -Raw
+          $m = [regex]::Match($text, "(?ms)^## \[?$([regex]::Escape($version))\]?[^\n]*\n(.*?)(?=^## |\z)")
+          $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "See CHANGELOG.md." }
+          $notes += "`n`nLEO is in Preview until 1.0. The MSI is signed; new releases may show a SmartScreen notice until they build reputation.`nSource of the bundled engine (mihomo, GPL-3.0): the attached mihomo source archive."
+          Set-Content notes.md $notes
+      - name: Create the draft release (the user publishes it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          src=$(ls engine/release/mihomo-*-source.tar.gz)
+          # SHA256SUMS.txt: the MSI (from the sign job) plus the source archive, file names without folders.
+          sha256sum "$src" | sed "s#  .*/#  #" >> out/SHA256SUMS.txt
+          flags="--draft"
+          if [ "${{ needs.check.outputs.prerelease }}" = "true" ]; then flags="$flags --prerelease"; fi
+          gh release create "$TAG" out/LEO-*-x64.msi out/SHA256SUMS.txt "$src" \
+            $flags --title "${{ needs.check.outputs.title }}" --notes-file notes.md --verify-tag

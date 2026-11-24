@@ -44,6 +44,7 @@ public partial class App : Application
     public BondingViewModel Bonding { get; private set; } = null!;
     public ProfilesViewModel Profiles { get; private set; } = null!;
     public StatsViewModel Stats { get; private set; } = null!;
+    public UpdatesViewModel Updates { get; private set; } = null!;
 
     /// <summary>Main window handle, for Windows file/folder pickers.</summary>
     public IntPtr MainWindowHandle => _window is null ? IntPtr.Zero : WinRT.Interop.WindowNative.GetWindowHandle(_window);
@@ -58,10 +59,16 @@ public partial class App : Application
         Bonding = new BondingViewModel(Connection, _dispatcher);
         Profiles = new ProfilesViewModel(Connection, _dispatcher);
         Stats = new StatsViewModel(Connection, _dispatcher);
+        Updates = new UpdatesViewModel(Connection, _dispatcher);
 
-        Toasts.Register(() => _dispatcher.TryEnqueue(ShowMainWindow));
+        Toasts.Register(action => _dispatcher.TryEnqueue(() => OnToastInvoked(action)));
+        Connection.UpdateChanged += (_, _) => _dispatcher.TryEnqueue(ShowUpdateResultOnce);
         Connection.Notified += (_, n) =>
         {
+            if (n.Kind == Leo.Ipc.NotificationKind.UpdateAvailable && !Leo.Core.Updates.UpdatePolicy.ShouldToast(
+                    Connection.Update.LatestVersion, ViewModel.Ui.PostponedUpdateVersion, ViewModel.Ui.PostponedUpdateOn,
+                    DateOnly.FromDateTime(DateTime.Today)))
+                return;
             if (ViewModel.ShowNotifications) Toasts.Show(n);
         };
         Connection.Start();
@@ -92,6 +99,47 @@ public partial class App : Application
         {
             ShowMainWindow();
         }
+    }
+
+    /// <summary>A toast or one of its buttons was clicked (always the user's click).</summary>
+    private async void OnToastInvoked(string? action)
+    {
+        switch (action)
+        {
+            case "update":
+                // Admins only; anyone else sees why in Settings.
+                if (await Connection.TryInvokeAsync(c => c.InstallUpdateAsync()) is not null) ShowMainWindow();
+                break;
+            case "later":
+                ViewModel.Ui.PostponedUpdateVersion = Connection.Update.LatestVersion;
+                ViewModel.Ui.PostponedUpdateOn = DateOnly.FromDateTime(DateTime.Today);
+                ViewModel.Ui.Save();
+                break;
+            case "notes":
+                if (Connection.Update.LastResult?.NotesUrl is { } url) await Windows.System.Launcher.LaunchUriAsync(new Uri(url));
+                break;
+            default:
+                ShowMainWindow();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// After an update the service reports how it went; each user is told once ("LEO was updated to 0.2.0" or
+    /// "Update to 0.2.0 failed"), LEO.md §24.4.
+    /// </summary>
+    private void ShowUpdateResultOnce()
+    {
+        if (Connection.Update.LastResult is not { } r) return;
+        if (ViewModel.Ui.LastUpdateResultShown is { } shown && shown >= r.At) return;
+        ViewModel.Ui.LastUpdateResultShown = r.At;
+        ViewModel.Ui.Save();
+        if (!ViewModel.ShowNotifications) return;
+        Toasts.Show(r.Succeeded
+            ? new Leo.Ipc.LeoNotification(Leo.Ipc.NotificationKind.Updated, $"LEO was updated to {r.Version}",
+                "Split tunneling paused for a few seconds while it installed.", null, r.At)
+            : new Leo.Ipc.LeoNotification(Leo.Ipc.NotificationKind.UpdateFailed, $"Update to {r.Version} failed",
+                "LEO kept the version you had. Details are in Settings.", null, r.At));
     }
 
     /// <summary>Another launch was redirected to this instance (LEO.App.Program).</summary>
