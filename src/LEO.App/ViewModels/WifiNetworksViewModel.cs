@@ -184,7 +184,7 @@ public sealed partial class WifiRowViewModel : ObservableObject
 
     internal void NotifyIdleChanged() => OnPropertyChanged(nameof(CanAct));
     public bool CanDisconnect => _owner.CanEdit && Info.IsConnected;
-    public string SignalText => Info.IsVisible ? $"{Info.SignalPercent}%" : "—";
+    public string SignalText => Info.IsVisible ? $"{Info.SignalPercent}%" : "";
 
     public string Details
     {

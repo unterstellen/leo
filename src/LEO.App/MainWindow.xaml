@@ -47,7 +47,7 @@
                 <NavigationViewItem Content="Networks" Tag="Networks">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE968;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItemHeader Content="Split tunneling" />
+                <NavigationViewItemSeparator />
                 <NavigationViewItem Content="Apps" Tag="Apps">
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE71D;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
@@ -65,6 +65,10 @@
                     <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D2;" /></NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <!-- Divider above Settings (the built-in Settings item comes after the footer items). -->
+                <NavigationViewItemSeparator />
+            </NavigationView.FooterMenuItems>
             <Border Margin="0,0,8,8" CornerRadius="8" BorderThickness="1"
                     Background="{ThemeResource LayerFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">

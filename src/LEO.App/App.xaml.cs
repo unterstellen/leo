@@ -162,7 +162,7 @@ public partial class App : Application
                     : "Not connected";
                 var item = new ToggleMenuFlyoutItem
                 {
-                    Text = $"{adapter.DisplayName}  —  {network}",
+                    Text = $"{adapter.DisplayName} · {network}",
                     IsChecked = adapter.IsPrimary,
                     IsEnabled = Networks.CanEdit && (connected || adapter.PriorityIndex != 0),
                     Icon = new FontIcon { Glyph = AdapterCardViewModel.GlyphFor(adapter.Kind) },

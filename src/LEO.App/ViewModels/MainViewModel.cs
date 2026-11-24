@@ -31,13 +31,13 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] public partial string ConnectionText { get; set; } = "Connecting to LEO service…";
     [ObservableProperty] public partial string ConnectionGlyph { get; set; } = ""; // Sync
     [ObservableProperty] public partial bool IsConnected { get; set; }
-    [ObservableProperty] public partial string EngineStateText { get; set; } = "—";
-    [ObservableProperty] public partial string ServiceVersionText { get; set; } = "—";
-    [ObservableProperty] public partial string RunningAsText { get; set; } = "—";
-    [ObservableProperty] public partial string UptimeText { get; set; } = "—";
-    [ObservableProperty] public partial string AccessText { get; set; } = "—";
-    [ObservableProperty] public partial string ClientsText { get; set; } = "—";
-    [ObservableProperty] public partial string TrayToolTip { get; set; } = "LEO — connecting…";
+    [ObservableProperty] public partial string EngineStateText { get; set; } = "";
+    [ObservableProperty] public partial string ServiceVersionText { get; set; } = "";
+    [ObservableProperty] public partial string RunningAsText { get; set; } = "";
+    [ObservableProperty] public partial string UptimeText { get; set; } = "";
+    [ObservableProperty] public partial string AccessText { get; set; } = "";
+    [ObservableProperty] public partial string ClientsText { get; set; } = "";
+    [ObservableProperty] public partial string TrayToolTip { get; set; } = "LEO · connecting…";
 
     [ObservableProperty] public partial bool StartAtLogin { get; set; }
 
@@ -102,7 +102,7 @@ public sealed partial class MainViewModel : ObservableObject
         (ConnectionText, ConnectionGlyph) = _connection.State switch
         {
             ConnectionState.Connected => ("Connected to LEO service", ""),          // CheckMark
-            ConnectionState.Incompatible => ("LEO service version mismatch — reinstall LEO", ""), // Warning
+            ConnectionState.Incompatible => ("LEO service version mismatch. Reinstall LEO.", ""), // Warning
             ConnectionState.ServiceUnavailable => ("LEO service is not running", ""),           // Error
             _ => ("Connecting to LEO service…", ""),
         };
@@ -118,7 +118,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         else
         {
-            EngineStateText = ServiceVersionText = RunningAsText = UptimeText = ClientsText = AccessText = "—";
+            EngineStateText = ServiceVersionText = RunningAsText = UptimeText = ClientsText = AccessText = "";
         }
 
         // M6: say when unruled traffic follows a VPN, or a VPN paused split tunneling.
@@ -126,7 +126,7 @@ public sealed partial class MainViewModel : ObservableObject
         var vpnNote = split.State == SplitTunnelEngineState.StoodAside ? " · split tunneling paused by a VPN"
             : split.UnruledVia is { } via ? $" · through {via}"
             : split.UnruledBondNow is { } bond ? $" · everything else through bond '{bond}'" : "";
-        TrayToolTip = IsConnected ? $"LEO — engine {EngineStateText.ToLowerInvariant()}{vpnNote}" : $"LEO — {ConnectionText}";
+        TrayToolTip = IsConnected ? $"LEO · engine {EngineStateText.ToLowerInvariant()}{vpnNote}" : $"LEO · {ConnectionText}";
     }
 
     private static string FormatUptime(TimeSpan t) =>
