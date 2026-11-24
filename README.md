@@ -62,6 +62,8 @@ Wi-Fi passwords you enter are handed straight to Windows, which stores them encr
 
 Requirements: [.NET SDK 10.0.404+](https://dotnet.microsoft.com/download) (pinned in `global.json`). Visual Studio is not needed.
 
+Working on LEO in an IDE (JetBrains Rider, with ready-made run configurations in `.run/`): see [docs/developing.md](docs/developing.md).
+
 ```powershell
 git clone https://github.com/unterstellen/leo-windows.git
 cd leo-windows

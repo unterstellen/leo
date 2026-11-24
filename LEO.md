@@ -312,7 +312,7 @@ leo-windows/
 | **M5** | Profiles + Stats (**built**, §19) | Profiles with triggers; per-adapter/per-app stats; connections view |
 | **M6** | VPN coexistence (**built**, §20–§21) | VPN as underlay + as target + bypass; kill-switch detection |
 | **M7** | Bonding (**built**, §22–§23) | Bond groups, balancing modes, sticky sessions |
-| **M8** | Ship | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
+| **M8** | Ship (**designed**, §24) | Self-contained builds (bundled .NET runtime, no prerequisites), WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases auto-update, uninstall cleanup, public beta on more hardware (§16), hardening, docs |
 | *Future idea* | Bond through your own PC | Not planned. Single-stream bonding via the user's own second PC, never a hosted server (§15) |
 
 ---
@@ -444,7 +444,7 @@ Windows trusts any **valid signature from a recognised certificate authority**; 
 | Microsoft Store | Free | Microsoft | Poor fit: MSIX can't install drivers (Wintun) and services need a restricted capability; a Win32 installer in the Store still needs our own certificate. |
 | Unsigned | Free | — | SmartScreen warning, and **Smart App Control blocks it outright**: not acceptable for "everyone". |
 
-Rules regardless of option: release builds are made and signed in GitHub Actions (never on a dev PC); only LEO's own binaries are signed (Wintun and Microsoft runtime files keep their upstream signatures); the installer announces system changes (service; from M3 a virtual network adapter) and a real uninstaller exists.
+Rules regardless of option: release builds are made and signed in GitHub Actions (never on a dev PC); LEO's own binaries are signed, plus third-party libraries that arrive unsigned (decided 2026-11-24, §24.3); Wintun, Microsoft runtime files and other already-signed files keep their upstream signatures; the installer announces system changes (service; from M3 a virtual network adapter) and a real uninstaller exists.
 
 ---
 
@@ -883,3 +883,230 @@ Built from §22 with the user's decisions (§22.8: By site default, bonds machin
 **Not exercised live:** "if no network works" with every member down at once (would need WiFi off as well); a same-router hint on real hardware (no two members on one router here); a bond member that is metered per Windows (the tether wasn't flagged metered).
 
 **Found on the way (not M7):** the engine's `config.yaml` in `%ProgramData%\UNTERSTELLEN\LEO\engine\` is readable by `BUILTIN\Users` and contains the engine API secret, so any local user could read connections or switch the engine's routes through its loopback API (since M3). Worth tightening (ACL the engine folder like config.json, §8) as an M8 hardening item.
+
+---
+
+## 24. M8 design: ship (2026-11-24)
+
+Design written before the build (no code yet). Covers §12's M8 row and the open items of §16: self-contained builds, the WiX MSI, code signing in GitHub Actions (§16.1), GitHub Releases + the in-app updater (§9), uninstall cleanup, hardening, Preview releases tested on more hardware, and docs. Rules carried over: **no hosted servers, no telemetry, no accounts**; release builds are signed in GitHub Actions only, never on a dev PC; the user commits, pushes and tags.
+
+**What the dev PC shows (read-only checks, 2026-11-24, service running, engine running for the Phone profile's rules):**
+- **Builds are framework-dependent.** `src\LEO.App\bin\{Debug,Release}\…\win-x64` (406 files, ~164 MB) already carries the **Windows App SDK self-contained** (`WindowsAppSDKSelfContained=true`, `WindowsPackageType=None`: `Microsoft.WindowsAppRuntime.dll` is in the folder) but **no .NET runtime** (no `coreclr.dll`; `LEO.runtimeconfig.json` asks for `Microsoft.NETCore.App` + `Microsoft.WindowsDesktop.App` 10.0.0). The service build is the same: no runtime in the folder, and its `runtimeconfig.json` also asks for **`Microsoft.WindowsDesktop.App`**, which a service shouldn't need (cause to be found in the build: no `UseWPF`/`UseWindowsForms` in `LEO.Service.csproj`). The dev PC has .NET 8/9/10 runtimes installed, so this never showed.
+- **No publish step, no installer project, no release workflow.** `.github/workflows/build.yml` only builds (Release) and tests on `windows-latest` for pushes to canary/main/preview and PRs (`contents: read`). `Directory.Build.props` has `Version 0.1.0`, `RuntimeIdentifier win-x64`, `SupportedOSPlatformVersion 10.0.22000.0`. No `installer/` folder yet (§11 plans one).
+- **Installed service layout (from `tools\dev-service.ps1 deploy`):** `C:\Program Files\UNTERSTELLEN\LEO\Service\` = robocopy `/MIR` of the Debug build (51 files, 90.8 MB, of which `engine\mihomo.exe` 58.4 MB and `Microsoft.Windows.SDK.NET.dll` 25.1 MB) plus **13 satellite-resource folders** (`cs`, `de`, … `zh-Hant`) although LEO is English only. Service `LEO` ("LEO Network Engine"), `LocalSystem`, `Auto`, binPath quoted, recovery restart 5 s / 10 s / 30 s with a 1-day reset, registered by `LEO.Service.exe install --start` (`sc.exe create/config/description/failure/failureflag`). Service SDDL grants interactive users query/start-level rights only (`IU: CCLCSWLOCRRC`).
+- **Signatures:** `LEO.Service.exe` and `engine\mihomo.exe` are **not signed** (dev build; mihomo is the upstream release binary from `tools\get-engine.ps1`, v1.19.34, zip SHA-256 `CD6738D4…AB443A79`, also in `artifacts\engine\` with `version.txt`). Smart App Control is off on this PC (§12a).
+- **What `tools\dev-service.ps1` does today:** `deploy` = fetch the pinned engine (no-op when present) → `dotnet build` LEO.Service (Debug, as the user) → one elevated step: stop the service, robocopy the build to Program Files, copy `mihomo.exe` to `Service\engine\`, `LEO.Service.exe install --start`. `uninstall` = `LEO.Service.exe uninstall`: stop (metrics handed back, §5.9), `sc delete`, then remove LEO's own firewall group **"LEO (VPN only)"** (§21); files and ProgramData stay. `restart`, `logs`. The script says "The MSI (M8) replaces this".
+- **ACLs:** Program Files folders inherit the normal Program Files ACL (TrustedInstaller/SYSTEM/Administrators full, `BUILTIN\Users` read+execute). `C:\ProgramData\UNTERSTELLEN\LEO` has a **protected** ACL set by `MachineDataSecurity.Apply()` (SYSTEM + Administrators full, Users read+execute, inherited by everything below). Therefore **`engine\config.yaml` (2 KB, contains `secret: …` for the engine API on a random 127.0.0.1 port), `engine\cache.db`, `engine\rules\`, `config.json`, `stats.db` and `logs\` are all readable by `BUILTIN\Users`** (the M7 finding, §23). `MachineDataSecurity` only sets the DACL; it doesn't check the folder's **owner**, and `C:\ProgramData` lets standard users create folders, so a user could pre-create `C:\ProgramData\UNTERSTELLEN` before LEO is installed.
+- **Pipe:** `\\.\pipe\LEO.Control` ACL = Network deny, SYSTEM + Administrators full, Interactive read/write (+ the hosting account in console runs). `ControlPipeServer.ServeAsync` identifies the client from its process token and logs pid/user/image, and carries `// TODO(M8): reject clients whose image is not Authenticode-signed` (deferred in M0, §4.2). The UI doesn't check who owns the pipe server.
+- **Start at login:** `HKCU\…\Run\LEO` = `"C:\UNTERSTELLEN\Projects\leo-windows\src\LEO.App\bin\Debug\…\LEO.exe" --tray`, written by `StartupManager` in the app (§7).
+- **Runtime state an uninstall must cover:** the engine adapter **"LEO" (Meta Tunnel) is Up** right now (the engine creates and removes it; mihomo embeds Wintun, §17); no rules in "LEO (VPN only)" at the moment; config at schema 2 plus `config.json.v1.bak`; daily logs since 2026-11-20.
+- **Updater:** not built. `LeoInfo.LatestReleaseApi` still points at `https://api.github.com/repos/unterstellen/leo-windows/releases/latest`, which §17 found rate-limited for anonymous callers on this network.
+
+### 24.1 Self-contained builds
+
+**Decisions:**
+- **`dotnet publish -c Release -r win-x64 --self-contained true`** for `LEO.App` and `LEO.Service`; Windows App SDK stays self-contained (already set). Nothing to install first: no .NET runtime, no Windows App Runtime package, no VC++ redistributable (mihomo is a static Go binary; SQLite is Windows' own `winsqlite3.dll`, §19). x64 only (§2).
+- **No trimming, no single-file, no Native AOT:** WinUI 3 XAML, StreamJsonRpc and System.Text.Json reflection make trimming risky, and single-file extraction would put code under a temp folder. **ReadyToRun on** for both (faster tray start at login); measured in the build, dropped if it doesn't help.
+- **English only on disk too:** `SatelliteResourceLanguages=en` in `Directory.Build.props` (removes the 13 language folders).
+- **One install folder:** `C:\Program Files\UNTERSTELLEN\LEO\` holds `LEO.exe` (UI), `LEO.Service.exe` and `engine\mihomo.exe`, publishing both projects into the same folder so the .NET runtime (~70 MB) is shipped once. A CI check fails the build if the two publishes produce the **same file name with different content** (version clash); the fallback is two folders (`App\`, `Service\`) with the runtime twice. The dev layout (`…\LEO\Service\`) is replaced; the MSI removes it (§24.2).
+- **Find and drop the service's `Microsoft.WindowsDesktop.App` dependency** if nothing needs it (saves size and a framework the service never uses). If it's needed (e.g. by a Windows SDK projection), it is simply bundled.
+- **Version from the tag:** CI passes `-p:Version=<x.y.z>` (from `v<x.y.z>` or `v<x.y.z>-canary.N`); `Directory.Build.props` keeps `0.1.0` for local builds. `LeoInfo.Version` already reads the informational version.
+- **Expected size** (to be measured): payload ~250–300 MB uncompressed (runtime ~70, Windows App SDK ~90, mihomo ~58, LEO + libraries ~30); MSI with LZX cabinets roughly 90–120 MB.
+
+### 24.2 The WiX MSI
+
+**Decisions:**
+- **WiX Toolset v5 or later, SDK-style project** `installer/LEO.Installer.wixproj` (`WixToolset.Sdk` from NuGet, built with `dotnet build`, so no Visual Studio and nothing installed on the machine). Per-machine, x64, `Program Files\UNTERSTELLEN\LEO`. One fixed **UpgradeCode** forever; a new ProductCode per release. Licence check of the toolset before use (open question 7).
+- **One admin prompt:** a per-machine MSI elevates once when the install starts (UAC from Windows Installer); every custom action runs deferred inside that elevated transaction (`Impersonate="no"`), so nothing asks again. A non-admin who can't elevate gets Windows' own message.
+- **Launch conditions:** Windows 11 (build ≥ 22000) and x64, else a clear message. A **dev-deployed service** (service `LEO` present but not installed by this MSI, i.e. `…\LEO\Service\LEO.Service.exe`) → the MSI removes it the same way `LEO.Service.exe uninstall` does (stop, delete, firewall group), then installs; config in ProgramData is kept and used.
+- **Service:** `ServiceInstall` (name `LEO`, display "LEO Network Engine", description from `LeoInfo`, `LocalSystem`, auto-start, `ErrorControl normal`) + `ServiceControl` (start on install, stop and remove on uninstall, `Wait="yes"`) + recovery actions as today (restart 5 / 10 / 30 s, reset 1 day, also on non-crash failures). The `install`/`uninstall` verbs of `LEO.Service.exe` stay for `dev-service.ps1` only. If the new service doesn't start, Windows Installer rolls the whole install back (old version stays).
+- **The engine:** `engine\mihomo.exe` is a normal file component next to the service, **built from source in the release workflow and signed with LEO's certificate** (§17, §24.3). It installs no driver and no adapter: the engine creates the "LEO" Wintun adapter at run time and removes it when it stops (§17). The MSI announces this in its welcome text: "LEO installs a background service and, while split tunneling is on, a virtual network adapter named LEO."
+- **Start menu:** one shortcut "LEO" → `LEO.exe` with the app's **AppUserModelID**, so toasts and the taskbar group work for the unpackaged app (checked in the test plan). No desktop shortcut.
+- **"Start LEO at login" (checkbox, on by default)** and **"Open LEO now" (checkbox on the last page, on)**. **Decided by the user (2026-11-24):** the MSI writes **`HKLM\…\Run\LEO = "<install>\LEO.exe" --tray`** (removed cleanly on uninstall, works for every user of the PC), and the app's "Start at login" toggle becomes a **per-user switch in `ui.json`** that makes `--tray` exit at once for that user. The installed app then stops writing `HKCU\…\Run` and removes an old `HKCU` `LEO` value (the dev one shown above) the first time it runs from Program Files. Silent installs take `START_AT_LOGIN=0|1`.
+- **UI:** a small custom sequence (welcome with the system-change note and "LEO is free software, GPL-3.0-or-later", install folder fixed, the two checkboxes, progress, finish). No licence-acceptance page (the GPL doesn't require acceptance; `LICENSE` is installed next to the binaries).
+- **Upgrades:** `MajorUpgrade` scheduled `afterInstallValidate` (old version fully removed, new one installed, in one transaction); **downgrades refused** ("A newer LEO is already installed"). Config, stats and logs in ProgramData are never touched by an upgrade. The UI is closed and restarted through **Restart Manager** (the app calls `RegisterApplicationRestart("--tray")` and closes its window and tray icon when asked), so an update doesn't leave "files in use".
+- **Version numbers (Windows' rules + LEO's scheme):** Windows Installer reads `ProductVersion` as `major.minor.build` with **major ≤ 255, minor ≤ 255, build ≤ 65535**, and compares **only these three** (a 4th field is ignored, so two MSIs differing only there don't upgrade). File versions inside the exe/dll have four fields of 0–65535. Nothing else is required by Windows. LEO uses **`MAJOR.MINOR.PATCH`** (semantic versioning): while in Preview `0.MINOR.PATCH` (MINOR up for a release with new features, PATCH up for a fixes-only release), `1.0.0` when the user calls it ready. The first public release is `v0.1.0` (already in `Directory.Build.props`). Canary tags use the next free patch number with a suffix (`v0.2.1-canary.1`), and **every tag's `x.y.z` is higher than every earlier tag's**; a CI check refuses a tag that isn't.
+- **File name** `LEO-<x.y.z>-x64.msi` (as §9); a canary suffix appears in the release title only.
+
+### 24.3 Code signing (the user's choice, §16.1)
+
+Windows (Smart App Control, SmartScreen, Defender) needs a signature from a publicly trusted certificate authority. Since 2023 every publicly trusted code-signing key must live in a hardware token or a cloud HSM, so **"signed in GitHub Actions only" means a cloud key that a GitHub-hosted runner can use without a person at a keyboard**. That is the deciding factor, more than the price.
+
+| Option | Cost (check at purchase) | Name in the signature | Signing from GitHub Actions | Notes |
+|---|---|---|---|---|
+| **Certum Open Source Code Signing** (current favourite) | Low, tens of € per year | "Open Source Developer, <the user's name>" (a personal name, public in every file) | **To verify before buying.** The cloud variant (SimplySign) is built around a desktop app and a one-time code from a phone; CI use needs either a documented remote-signing interface from Certum or keeping the second factor's seed as a GitHub secret (weakens the 2FA, may break Certum's terms). The card-and-reader variant can't be used on GitHub-hosted runners at all (only a self-hosted runner, i.e. a PC of the user's, which the "never on a dev PC" rule excludes) | ID check of a person; no project-popularity rule |
+| Azure Trusted Signing (Microsoft may have renamed it; check) | ~$10 per month | INFERSTELLEN or the individual, as verified | **Best:** official GitHub Action, keys in Microsoft's HSM, short-lived certificates, no secrets beyond an Entra app login (OIDC, no stored password) | Eligibility rules for companies (years in business, countries) and individuals (few countries) are strict: check INFERSTELLEN first |
+| Classic OV certificate with a cloud HSM (e.g. SSL.com eSigner, DigiCert KeyLocker, Sectigo cloud) | ~€150–500 per year incl. cloud key | INFERSTELLEN | Good: vendor CLI or PKCS#11 in CI with an API credential stored as a GitHub secret | Company validation of INFERSTELLEN |
+| Microsoft Store | Free | Microsoft | n/a | Ruled out for M8: MSIX can't install the service/driver path cleanly (§9) |
+| SignPath Foundation | Free | SignPath | n/a | **Ruled out (2026-11-22)** |
+| Unsigned | Free | none | n/a | Smart App Control blocks it: not shippable (§16) |
+
+- **Recommendation:** buy nothing until the chosen CA confirms in writing how its key is used from a GitHub-hosted runner. If Certum can do that without weakening 2FA, take Certum (cheapest, fits an individual OSS developer). If not, Azure Trusted Signing if INFERSTELLEN (or the user) is eligible; else an OV certificate with a cloud HSM.
+- **No option gives instant SmartScreen reputation** (Microsoft removed the EV fast-track in 2024): the first releases may show "Windows protected your PC" until enough downloads build reputation. The README says so, and each release is submitted to Microsoft's false-positive portal (§16).
+- **What gets signed (with an RFC 3161 timestamp):** LEO's own binaries (`LEO.exe`, `LEO.dll`, `LEO.Service.exe`, `LEO.Service.dll`, `LEO.Core.dll`, `LEO.Ipc.dll`), `mihomo.exe` (built in CI), and the MSI. Microsoft runtime files keep Microsoft's signatures; Wintun (embedded in mihomo) keeps its own. **Change to §16.1 (user's decision, 2026-11-24):** a CI step lists every PE file in the payload, and **third-party library DLLs that arrive unsigned** (e.g. from NuGet) are signed with LEO's certificate too, because Smart App Control also checks DLLs and would otherwise block them.
+- **Same signer everywhere:** the pipe-client check (§24.6) and the updater (§24.4) compare signers by **subject (O/CN) plus the issuing CA chain**, not by certificate thumbprint, so a yearly renewal keeps working. A change of CA or of the name in the certificate is a deliberate event: that release's notes say so, and the updater accepts it only if the new MSI is also signed by the old identity (dual signature `/as`) for one transition release.
+- **Secrets** live in a GitHub **environment `release`** with the user as **required reviewer**, so the signing job waits for the user's click in GitHub even after a tag push. Forks and PR builds never see them.
+
+### 24.4 GitHub Releases and the in-app updater (§9)
+
+**Decisions:**
+- **Release workflow** `.github/workflows/release.yml`, triggered only by a pushed tag `v*` (the user tags; nobody else can push to the repo):
+  1. Check the tag (`x.y.z` higher than every earlier release, §24.2).
+  2. **Build the engine from source** (§17): mihomo at the pinned tag (v1.19.34 today, later bumps are their own PRs), Go version, build tags and flags copied from upstream's release workflow for the `windows-amd64-compatible` asset at that tag, plus `-trimpath`; the job records `mihomo -v` and the binary's SHA-256. Also packs the **corresponding source** (`git archive` of the tag + `go mod vendor`) as `mihomo-<ver>-source.tar.gz`, because LEO distributes a GPL binary (§5.3).
+  3. Restore, test (`dotnet test`, now **with** the CI-built engine, so `EngineConfigCheckTests` (`mihomo -t`) run instead of being skipped).
+  4. Publish self-contained (§24.1), payload checks (no clashing files, every PE listed).
+  5. **Sign** (environment `release`, waits for the user's approval): payload binaries, then build the MSI from the signed files, then sign the MSI; `signtool verify /pa /all` on everything; fail on any unsigned PE.
+  6. Create a **draft** GitHub Release (pre-release when the tag has a suffix) with `LEO-<x.y.z>-x64.msi`, `SHA256SUMS.txt`, `mihomo-<ver>-source.tar.gz`, and release notes from `CHANGELOG.md`. **The user publishes the draft by hand.**
+- **Update check without the API** (the §17 finding: anonymous `api.github.com` was rate-limited here):
+  - **Stable:** `GET https://github.com/unterstellen/leo-windows/releases/latest` **without following the redirect**; the `Location` header ends in `/releases/tag/v<x.y.z>`. This is the web endpoint, not the REST API.
+  - **Canary (pre-releases):** `https://github.com/unterstellen/leo-windows/releases.atom`, the public Atom feed, which lists pre-releases too; the newest entry with a higher version wins.
+  - **Download:** `https://github.com/unterstellen/leo-windows/releases/download/v<tag>/LEO-<x.y.z>-x64.msi` (redirects to GitHub's file host). The file name is fixed by convention, so no API call is needed.
+  - `LeoInfo.LatestReleaseApi` is replaced by these URLs; §8's "only network calls" line changes to "github.com (update check), plus the internet checks". User-Agent `LEO/<version>` with nothing that identifies the PC.
+- **When:** once at service start (delayed a few minutes) and then **once a day** with a random offset, plus "Check now" in Settings. Updates can be switched off ("Check for updates automatically"). The engine/TUN treats the service's own traffic like any unruled traffic (Primary, or a VPN that takes the default route), which is fine for an update.
+- **Who installs:** the **service** (SYSTEM) downloads, verifies and runs the MSI; the UI only shows and asks. This is what lets a standard user's UI show "Update available" without an admin prompt, while **only admins (Full access) can start an install** (same access rule as every change, §12a M1); standard users see "Ask an administrator to update LEO".
+- **Silent, automatic updates (user's decision, 2026-11-24):** by default the service checks once a day, downloads, verifies and installs a new version **on its own**, with no click. Afterwards a toast says "LEO was updated to <ver>" with a link to the release notes. Settings → Updates can turn automatic installing off (then a toast with **Update now** appears instead) or turn checking off. While the update installs, the service and engine restart, so split tunneling pauses for a few seconds and open connections through the engine reconnect; the toast says so. Safety nets for an update nobody clicked: the release is published only after the user approved signing and tested the draft (§24.10 Q8), the MSI rolls back if the new service doesn't start, and only an MSI signed by the same signer as the running service is ever run.
+- **Verification before running anything** (all must pass, else the file is deleted and the UI says why): the download completes into **`%ProgramData%\UNTERSTELLEN\LEO\updates\`** (SYSTEM + Administrators only, never a user's temp folder); `WinVerifyTrust` says the MSI's Authenticode signature is valid with a timestamp; the signer matches the **running service's** signer (§24.3); the MSI's `UpgradeCode` and `ProductName` are LEO's and its `ProductVersion` is higher than the installed one (read with `MsiOpenDatabase`, nothing executed). The SHA-256 from `SHA256SUMS.txt` is compared as an extra check but is not the gate (it comes from the same place as the MSI).
+- **Install:** `msiexec /i <file> /qn /norestart /l*v <updates>\install-<ver>.log` started by the service **outside its engine job object** (the job kills children when the service stops, and the MSI stops the service), then the MSI's own upgrade (§24.2) replaces files, restarts the service and Restart Manager restarts the UI. A failed install rolls back to the running version and the next service start shows "Update to <ver> failed" with the log path. The service deletes the MSI after success.
+- **Dev and unsigned builds never update themselves:** when the service's own image isn't signed, the updater only reports "Development build: updates are off".
+
+### 24.5 Uninstall cleanup
+
+Windows networking must look as if LEO had never been installed (§5.9, §16), and nothing LEO didn't create is touched.
+
+**Decisions** (a deferred custom action `LEO.Service.exe cleanup`, run as SYSTEM after the service has stopped, on a **full** uninstall only, not on upgrades):
+- **Service:** stop (the service's own stop path already stops the engine, hands interface metrics back to automatic and restores DNS, §5.9) and delete (`ServiceControl`).
+- **Engine adapter:** after the stop, if an adapter named "LEO" (Meta Tunnel) is still present (left by an engine crash), remove that one device. The **Wintun driver package itself stays**: it is shared with WireGuard, Tailscale and others, and Wintun manages its own versions.
+- **Metrics:** for every adapter LEO lists in config as managed, set "Automatic metric" back on if it's still off (covers a service that crashed before its stop path ran).
+- **DNS:** any adapter still pointing at the engine resolver `198.18.0.2` gets that entry removed (normally gone with the adapter).
+- **Firewall:** delete every rule in LEO's own group **"LEO (VPN only)"** (as `uninstall` does since M6), never another rule.
+- **Wi-Fi:** dual link (secondary-station sync, §12a M2) is set back to off on adapters where **LEO** turned it on (`AdapterSettings.DualLink`). Wi-Fi profiles are the user's saved networks (joined through LEO's dialog but owned by Windows) and **stay**; pins are LEO config only.
+- **Engine and metrics data:** `ProgramData\…\LEO\engine\` (config with secret, cache, rule files) and `updates\` are always deleted. Stats (`stats.db`) and logs follow the config choice below.
+- **Login start:** the HKLM Run value is MSI-owned and removed automatically (machine-wide entry, user's decision, §24.10 Q4).
+- **All settings are removed on uninstall (user's decision, 2026-11-24).** A full uninstall deletes `%ProgramData%\UNTERSTELLEN\LEO` completely (config, `.v1.bak`, stats, logs, engine, updates) and the `UNTERSTELLEN` folder if it is empty, plus every user profile's `%LocalAppData%\UNTERSTELLEN\LEO` (`ui.json`, UI logs; the cleanup runs as SYSTEM and walks the user profile folders). **Upgrades never delete anything** (the cleanup runs only when the product is really removed: `REMOVE=ALL AND NOT UPGRADINGPRODUCTCODE`). No `REMOVE_DATA` property and no extra button are needed; Settings → About gets an "Uninstall LEO" link that opens Windows' Installed apps page.
+- **Install folder:** removed by Windows Installer; the old dev folder `…\LEO\Service\` is removed on install (§24.2).
+
+### 24.6 Hardening
+
+**Decisions:**
+1. **Engine config secret (the M7 finding, §23).** Two layers:
+   - The engine folder `ProgramData\…\LEO\engine\` gets its **own protected ACL: SYSTEM + Administrators only** (no `Users` entry), applied by `MachineDataSecurity` on every service start and by the MSI. Standard users can no longer read `config.yaml`, `cache.db` or the rule files. Admins could already do everything, so they keep access.
+   - The secret **stays off disk**: the service passes it on the engine's command line (`-secret`, mihomo's flag that overrides the config; verified with `mihomo -h` in the build) and writes no `secret:` line. A SYSTEM process's command line isn't readable by standard users. If the flag doesn't behave as expected, the ACL alone closes the finding.
+   - A test pins it: the generated YAML has no secret, and the folder ACL has no Users entry.
+2. **Pipe-client Authenticode check (deferred from M0, §4.2).** On each connection, in signed (release) builds:
+   - The client's image path must be **inside LEO's install folder** (Program Files, admin-only writable), so a copied `LEO.exe` next to planted DLLs doesn't count;
+   - `WinVerifyTrust` must accept the image, and its signer must match the **service's own** signer (§24.3).
+   - Clients that fail get **read-only access** (what standard users get today), not a closed connection, so diagnostics keep working; changes are refused with `AccessDenied` and the log line says "unsigned client". (User's decision 2026-11-24: "do whatever is necessary", so this recommendation.)
+   - **Developers and live tests:** the check is **off when the service itself is unsigned** (every dev build; logged once), and an admin-only registry value `HKLM\SOFTWARE\UNTERSTELLEN\LEO\AllowUnsignedClients=1` turns it off on a signed install (for the opt-in `LiveM6/M7` helpers).
+   - Honest limit, written into §4.2: the signature check stops other programs from **pretending** to be LEO. It doesn't stop a program running as the same user from tampering with a running `LEO.exe` (same integrity level). The real boundary stays the pipe ACL plus the per-user access level (admins change, standard users read).
+3. **Pipe squatting (UI side):** before talking to `\\.\pipe\LEO.Control`, the UI checks that the **server** is in session 0 (`GetNamedPipeServerSessionId`) and its image is `LEO.Service.exe` in LEO's install folder; otherwise it shows "LEO's service isn't running" instead of trusting the pipe. The service creates its first instance with `FirstPipeInstance`, so it notices (and logs) a squatter instead of sharing the name.
+4. **ProgramData owner check:** the MSI creates `ProgramData\UNTERSTELLEN\LEO` with owner Administrators and the §8 ACL. On every start the service checks that `UNTERSTELLEN` and `LEO` are owned by SYSTEM or Administrators and are not reparse points (junctions/symlinks). If not, it resets the owner and ACL (SYSTEM may), and refuses to write there if that fails. This stops a standard user who pre-created the folder from redirecting SYSTEM's writes.
+5. **Engine binary check:** in signed builds the service starts `engine\mihomo.exe` only if it carries LEO's signature (same check as 2).
+6. **DLL loading:** both processes call `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_APPLICATION_DIR)` at start; the install folder is admin-only writable.
+7. **Updates folder** is SYSTEM + Administrators only (§24.4); downloads are never run from a user-writable path.
+8. **Kept as they are, on purpose:** `config.json`, `stats.db` and `logs\` stay readable by standard users. They show the same rules and daily totals in the UI read-only, and logs never hold per-connection data (§17–§19). LocalSystem stays (§4.1); reducing the service's privileges is a later idea, not M8.
+- **IPC protocol 10 → 11** (updater calls, §24.7); the client check needs no contract change.
+
+### 24.7 Preview releases and hardware matrix (§16)
+
+**Decisions:**
+- **No separate beta (user's decision, 2026-11-24): LEO stays in "Preview" until 1.0.** Every 0.x release is a normal, signed GitHub release titled "LEO 0.x.y (Preview)", and the app's About page says Preview. They are **not** marked "pre-release" on GitHub, because `/releases/latest` (the updater's stable check, §24.4) skips pre-releases. The Canary channel (pre-releases, `releases.atom`) stays for builds the user wants to try on the user's own PCs first; it is off by default. The hardware matrix below is the checklist for the user's other computers and for anyone who reports through the issue forms.
+- **Reporting without telemetry:** Settings → About → **"Copy diagnostics"** (Click handler) puts a text report on the clipboard: LEO and Windows version, adapters (kind, driver name + version, chipset), states, which features were refused and why, VPN products detected, recent service log **warnings/errors**. SSIDs, IP and MAC addresses and nicknames are **left out by default** (a checkbox can add them). The tester pastes it into a GitHub issue themselves; LEO sends nothing.
+- **Issue forms** (`.github/ISSUE_TEMPLATE/`): bug report (steps, expected/actual, diagnostics), hardware report ("works on my PC": checklist per feature), feature request. **Security issues** go through GitHub's private vulnerability reporting (`SECURITY.md`), so no email address is published.
+- **Hardware matrix** (each row: install, inventory, Primary switching, failover, Wi-Fi pin/join, app + destination rules, bonding, VPN coexistence, uninstall):
+
+| Area | Covered so far (dev PC) | Target (user's other PCs, reporters) |
+|---|---|---|
+| Wi-Fi chipsets | Qualcomm FastConnect 6900 (DBS, secondary STA) | Intel AX2xx/BE2xx, Realtek, MediaTek, a USB Wi-Fi stick |
+| Ethernet | none (laptop without a port) | onboard Intel/Realtek, USB-C dongles (Realtek RTL8153/8156), a dock |
+| Phone tethering | Android RNDIS | Android NCM, **iPhone** (Apple Mobile Device Ethernet), Bluetooth PAN |
+| Cellular | none | a built-in WWAN modem, if a tester has one |
+| VPNs | Tailscale (signed out) | WireGuard for Windows (incl. "block untunneled"), OpenVPN, built-in IKEv2, a commercial client with a kill switch, a corporate always-on client (§20.8 gaps) |
+| Security software | Defender | Defender with Smart App Control **on** (fresh PC), 2–3 common antivirus suites, third-party firewalls |
+| Windows | 11 Pro 26200 | 11 Home, 11 23H2/24H2/25H2, a standard (non-admin) user account, a managed/Intune PC (expected limits documented) |
+
+- **When to call it 1.0** (the user's call; suggested checklist): no open "breaks the network" bug; install/upgrade/uninstall clean on every tested machine; each matrix row working or its limit explained; at least two silent updates delivered without problems; Defender/SmartScreen clean (or false positives reported).
+
+### 24.8 README and docs
+
+- **README.md:** rewrite the status table (it still says split tunneling is "Next (M3)"; M3–M7 are built), add screenshots (Networks, Apps, URLs & IPs, Bonding, Stats, tray), **Install** (download the MSI from Releases, one admin prompt, what it installs, the possible SmartScreen notice for new releases), **Update**, **Uninstall** (what is removed, keep/remove settings), **Limits** (one connection = one network §22.6, ECH/"domain unknown" §5.4, IPv6 not captured §20.7, VPN kill switches §20.4, secondary Wi-Fi stations §12a M2, Windows 11 x64 only), **Safe mode** (Shift at start, stop the service), **Privacy**, **Build from source** (today's section).
+- **New files:** `PRIVACY.md` (no telemetry/accounts/servers; the exact list of LEO's own network calls: github.com update check, the internet checks, engine health checks for bonds; what is stored where and for how long, §19), `SECURITY.md`, `CONTRIBUTING.md` (build, tests, the UI rules: Click handlers only, one dialog at a time, no hidden time limits, no em dashes in UI text; DCO vs CLA stays §14's open question), `CHANGELOG.md` (release notes source), `THIRD-PARTY-NOTICES.md` (mihomo GPL-3.0 with the source archive, Wintun licence, .NET / Windows App SDK / StreamJsonRpc / H.NotifyIcon / CommunityToolkit / Newtonsoft and other MIT/Apache notices), `docs/managed-pcs.md` (admin needed, policies that block services or drivers, silent install/uninstall properties).
+- **In the app:** Settings → About shows version, channel, "Signed by <signer>" (or "Development build"), licence, links to source code at this version's tag, third-party notices and privacy (GPL: recipients can find the source).
+- `LEO.md`: header "Code signing" and §9/§16 updated once the user decides; §4.2 gets the honest limit; §8's network-call line changes (§24.4).
+
+### 24.9 Implementation plan (for the M8 build session)
+
+**Build and packaging:**
+- `Directory.Build.props`: `SatelliteResourceLanguages=en`; `PublishReadyToRun`, `SelfContained` for publish; version override from CI.
+- `LEO.Service.csproj`: find and remove the `Microsoft.WindowsDesktop.App` reference if unneeded.
+- `tools/build-engine.ps1` (new): builds mihomo from source at the pinned tag (used by CI; developers keep `get-engine.ps1`).
+- `tools/build-release.ps1` (new): local **unsigned** publish + MSI for testing (never signs; prints "unsigned test build").
+- `installer/LEO.Installer.wixproj` + `Package.wxs` (components, service, shortcut with AUMID, HKLM Run, launch conditions, MajorUpgrade, property `START_AT_LOGIN`), `Ui.wxs` (welcome with the system-change note, checkboxes, finish), `CustomActions` calling `LEO.Service.exe cleanup` (full uninstall only) / `remove-dev-install` (deferred, no impersonation).
+- `.github/workflows/release.yml` (new, §24.4) with environment `release`; `build.yml` gains a packaging smoke job (publish + unsigned MSI build + payload checks) on PRs.
+- `tools/dev-service.ps1`: unchanged for dev, plus a refusal to `deploy` over an MSI-installed LEO ("uninstall the MSI first").
+
+**Core (`src/LEO.Core`):**
+- `Updates/ReleaseVersion.cs` (parse `v1.2.3-canary.4`, compare, MSI three-field rule), `Updates/ReleaseFeed.cs` (redirect `Location` and Atom parsing, asset URL), `Updates/UpdatePolicy.cs` (pure: when to check, what to offer, channel, ask vs auto, standard user vs admin).
+- `Security/SignerIdentity.cs` (subject + CA chain comparison, renewal tolerant), pure and testable with test certificates.
+- `LeoInfo`: release URLs instead of `LatestReleaseApi`; `LeoPaths.Updates`, `LeoPaths.EngineDir`.
+
+**Service (`src/LEO.Service`):**
+- `Security/Authenticode.cs` (`WinVerifyTrust` + signer extraction), `ClientTrust` used in `ControlPipeServer.ServeAsync` (replaces the TODO), `AllowUnsignedClients` reading, `FirstPipeInstance`.
+- `MachineDataSecurity`: owner/reparse-point check, engine folder SYSTEM + Admins only, updates folder.
+- `SplitTunnel/MihomoEngine`: `-secret` on the command line, no secret in YAML, engine signature check before start.
+- `Updates/UpdateService.cs` (hosted: schedule, check, download with resume, verify, install outside the job object, result after restart).
+- `Program.cs`/`ServiceInstaller`: new verbs `cleanup` (§24.5, removes all data) and `remove-dev-install`, `SetDefaultDllDirectories`.
+
+**IPC (`src/LEO.Ipc`), protocol 10 → 11:** `UpdateInfo` (installed version, channel, signed/signer, latest found, state: idle/checking/available/downloading/verifying/installing/failed + reason, last check time, settings); `GetUpdateInfoAsync`, `CheckForUpdatesAsync`, `InstallUpdateAsync` (Full access), `SetUpdateSettingsAsync` (auto-check, ask/auto, channel); notification kinds `UpdateAvailable`, `UpdateFailed`.
+
+**UI (`src/LEO.App`):**
+- Settings → **Updates** (channel, check automatically, install automatically (on), Check now, Update now when automatic installing is off, state text) and **About** (Preview label, signer, licences, source link, Copy diagnostics, "Uninstall LEO" link). All from Click handlers, one ContentDialog at a time, buttons shown disabled while an action runs (no hidden time limits).
+- Toast "LEO <ver> is available" with **Update now** / **Later**.
+- `StartupManager` per Q4 (per-user switch in `ui.json`, removal of the old HKCU value when running from Program Files).
+- Pipe client: server session/image check (§24.6 item 3).
+- `RegisterApplicationRestart("--tray")` and a clean close on Restart Manager's request.
+
+**Docs:** §24.8 files; README rewrite.
+
+### 24.10 Open questions and the user's answers (2026-11-24)
+
+1. **Code signing: can't LEO sign itself?** Not for other people's PCs. A self-made ("self-signed") certificate is only trusted on a PC that has imported it; Smart App Control blocks it and SmartScreen treats it like no signature (§12a). Making it trusted would mean the MSI installing LEO's own root certificate into every user's Windows trust store: the installer that does it would itself be unsigned (blocked first), antivirus treats such installers as malware, and whoever holds that key could sign anything and have those PCs trust it. So trust has to come from a certificate authority that Windows already trusts, after it has checked who the publisher is. **What the user does, once:** (a) pick the CA (§24.3); (b) pass its identity check (ID document, for a company the company papers); (c) pay; (d) set up the cloud key the CA provides; (e) put the CA's API credentials into the GitHub environment `release` as secrets. From then on every tagged release is signed in GitHub Actions automatically. Still open: which CA (Certum is asked first how its key works from GitHub-hosted runners, §24.3).
+   - **SourceForge:** the signature lives inside the files, so where they are downloaded from doesn't matter; the same signed MSI can be offered on GitHub and SourceForge. SourceForge can mirror a GitHub project's releases automatically (to be set up by the user on SourceForge, nothing in LEO's build). GitHub stays the source of truth.
+2. **Updates: decided, silent and automatic by default** (§24.4), GitHub first. SourceForge isn't needed for updates: the updater reads GitHub (the `releases/latest` redirect, no rate-limited API). A SourceForge fallback (used only when GitHub can't be reached) is possible later through SourceForge's public project file listing and download links; it adds no risk because the updater runs only an MSI signed by LEO's own signer, wherever it came from. Not part of M8 unless the user asks.
+3. **Uninstall: decided, remove all settings** (§24.5).
+4. **Start at login: decided, machine-wide entry written by the installer** (§24.2).
+5. **Third-party DLLs: decided (yes, 2026-11-24).** LEO ships libraries written by others. Checked on the dev PC's Release builds (230 exe/dll files): all Microsoft and most other libraries are signed by their authors, but six arrive **unsigned**: `H.NotifyIcon.dll`, `H.NotifyIcon.WinUI.dll`, `H.GeneratedIcons.System.Drawing.dll` (the tray icon library) and `MessagePack.dll`, `MessagePack.Annotations.dll`, `PolyType.dll` (pulled in by the pipe's JSON-RPC library), plus LEO's own six files. Smart App Control checks DLLs too, so an unsigned one can stop the app. Recommendation: the release workflow signs any third-party file that arrives unsigned with LEO's certificate (allowed by their open-source licences; it says "shipped by LEO", not "written by LEO") and leaves already-signed files untouched.
+6. **Test machines:** the user has other computers: they cover real hardware (Wi-Fi chips, Ethernet, tethering, VPNs). For install/upgrade/uninstall and Smart App Control on a fresh Windows, Claude can drive a **Hyper-V** VM from this PC with PowerShell Direct (`Invoke-Command -VMName`), resetting it to a clean checkpoint between runs, **if the user enables Hyper-V** (a Windows feature, admin, one reboot) and **provides a Windows 11 ISO** (a download from Microsoft; the user's call). Without that, the install tests run on one of the other computers by hand, with a checklist.
+7. **WiX licence:** WiX Toolset is the free, open-source tool that turns LEO's files into an MSI (MS-RL licence); only the tool is used, nothing of it ships inside LEO except Windows Installer's own standard tables. Recent versions added an "Open Source Maintenance Fee" that asks organisations earning money with it to pay the maintainers. LEO earns nothing, so it is expected not to apply; the build session reads the current terms before adding it and asks the user if anything says otherwise (fallback: WiX v5, which predates the fee).
+8. **Release gate: decided (yes, keep both clicks, 2026-11-24).** Meaning: after a tag push, GitHub builds everything, then **pauses before using the signing key until the user clicks "Approve"** in GitHub, and creates the release as a **draft the user publishes** after trying the signed MSI on a test PC. Reason: with silent automatic updates, a published release reaches every LEO PC within a day without anyone clicking; the gate makes sure a person looked first, and that nobody who gets into the repo or a workflow can sign something with the user's certificate. Recommendation: keep both clicks.
+9. **Unsigned clients: decided, read-only** (§24.6 item 2).
+10. **Beta: decided, no separate beta; LEO stays "Preview" until 1.0** (§24.7). Version numbers: §24.2 (`0.MINOR.PATCH`, first public release `v0.1.0`, Windows' MSI limits).
+
+### 24.11 Test plan
+
+**Unit tests (`tests/LEO.Tests`):**
+- `ReleaseVersion`: parse/compare (`v0.2.1-canary.1` < `v0.2.2` < `v1.0.0`), MSI three-field rule, tag checks the workflow uses.
+- `ReleaseFeed`: redirect `Location` → version (stable), Atom feed with pre-releases (canary), malformed responses ignored, asset URL format.
+- `UpdatePolicy`: once a day with offset, "Check now", ask vs auto, channel, standard user can't install, unsigned build never updates, newer-only, no repeat toast for a version the user postponed today.
+- `SignerIdentity`: same subject + CA after renewal → match; other subject, other CA, self-signed, expired without timestamp → no match; transition with dual signature.
+- `Authenticode` / `ClientTrust` with test files: a signed file inside the install folder → Full/ReadOnly by user as today; same file outside the folder → read-only; unsigned → read-only; check off when the service is unsigned; `AllowUnsignedClients`.
+- Engine hardening: generated YAML contains no `secret`; command line carries it; engine folder ACL has no Users entry (applied to a temp folder); owner/reparse check refuses a junction.
+- Cleanup planning (pure): which adapters get automatic metric back, which DNS entries are removed, only "LEO (VPN only)" rules, dual link only where LEO set it, all data folders listed for deletion on uninstall and none on upgrade.
+- Privacy: update and cleanup log lines contain versions, counts and ids only.
+
+**CI (GitHub Actions):**
+- Release workflow on a **test tag in a fork or a dry-run mode** (no signing secrets): engine built from source, `mihomo -t` tests run with it, payload clash check, every PE listed, unsigned MSI produced. With secrets (after the user's approval): `signtool verify /pa /all` passes for every PE and the MSI; draft release has MSI, `SHA256SUMS.txt`, mihomo source archive.
+
+**Installer (clean Windows 11 x64, Smart App Control on; Windows Sandbox or VM per Q6):**
+- Fresh install: exactly **one UAC prompt**; service `LEO` running as LocalSystem, auto, recovery actions set; Start menu "LEO" opens the app; toasts appear (AUMID); "Start at login" on/off both work after sign-out/in, per user; no .NET or Windows App Runtime installed on the machine (`dotnet --list-runtimes` absent) and LEO still runs; **Smart App Control doesn't block** any file (signed build only).
+- Silent install `msiexec /i … /qn START_AT_LOGIN=0` and silent uninstall.
+- Upgrade N → N+1 (MSI and in-app updater): config, stats, rules kept; UI restarted by Restart Manager; downgrade refused; a deliberately broken N+1 (service doesn't start) rolls back to N.
+- Uninstall with split tunneling active (engine adapter up, a "LEO (VPN only)" firewall rule present, dual link on, metrics pinned): afterwards no service, no "LEO" adapter, Automatic metric on, no 198.18.0.2 DNS, no LEO firewall rules, dual link off, Wi-Fi profiles still there, routes/DNS/metrics identical to a snapshot taken before install (as in §21), `ProgramData\UNTERSTELLEN\LEO` and every user's `LocalAppData\UNTERSTELLEN\LEO` gone. An upgrade in between keeps all of them.
+- Standard user account: install refused without admin; the app shows read-only; "Update available" shows "Ask an administrator".
+
+**Dev PC (WiFi = Primary, phone tether; only after the user removes the dev deploy):**
+- Install the MSI over the dev deploy: the dev service is replaced, the dev `…\LEO\Service\` folder removed, the existing config (schema 2, Phone profile and its rules) kept and active, the old HKCU Run value pointing at `bin\Debug` removed (if Q4 = HKLM).
+- Networking regression with the installed (signed) build: failover, one app rule, one destination rule, one bond (§22.9 smoke), engine start/stop leaves Windows unchanged.
+- Hardening live: as a standard user, `engine\config.yaml` can't be read (and contains no secret); a copy of `LEO.exe` outside Program Files gets read-only access; an unsigned test client is refused changes; the UI refuses a pipe served from session 1.
+- Updater live: point a test build at a **test repository's** releases (no change to the real repo): "available" → Update now → verified → installed → UI back; a tampered MSI (one byte changed, or signed by another certificate) is refused with a reason.
+
+**Preview (§24.7):** the matrix rows checked on the user's other PCs and through the issue forms with "Copy diagnostics"; every bug fix re-tested after it arrives through the silent updater.
