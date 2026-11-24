@@ -17,7 +17,11 @@
     <OutputName>LEO-$(ProductVersion)-x64</OutputName>
     <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir);AssetsDir=$(MSBuildThisFileDirectory)..\src\LEO.App\Assets</DefineConstants>
     <SuppressValidation>false</SuppressValidation>
-    <!-- ICE03: some third-party DLLs carry odd language ids in their version resources; harmless. -->
-    <SuppressIces>ICE03</SuppressIces>
+    <!--
+      ICE03: some third-party DLLs carry odd language ids in their version resources; harmless.
+      ICE43/ICE57: false positives for a per-machine package (Scope="perMachine" sets ALLUSERS=1, so the Start menu
+      shortcut goes to the all-users Start menu, but the checks assume a per-user one).
+    -->
+    <SuppressIces>ICE03;ICE43;ICE57</SuppressIces>
   </PropertyGroup>
 </Project>

@@ -12,12 +12,16 @@ public static class Toasts
 {
     private static bool _registered;
 
-    /// <summary>Register before the first toast. <paramref name="onClicked"/> runs when the user clicks one.</summary>
-    public static void Register(Action onClicked)
+    /// <summary>
+    /// Register before the first toast. <paramref name="onInvoked"/> runs when the user clicks one: with the button's
+    /// action ("update", "later", "notes") or null for the toast itself.
+    /// </summary>
+    public static void Register(Action<string?> onInvoked)
     {
         try
         {
-            AppNotificationManager.Default.NotificationInvoked += (_, _) => onClicked();
+            AppNotificationManager.Default.NotificationInvoked += (_, e) =>
+                onInvoked(e.Arguments.TryGetValue("action", out var action) ? action : null);
             AppNotificationManager.Default.Register();
             _registered = true;
         }
@@ -32,11 +36,21 @@ public static class Toasts
         if (!_registered) return;
         try
         {
-            var toast = new AppNotificationBuilder()
+            var builder = new AppNotificationBuilder()
                 .AddArgument("kind", n.Kind.ToString())
                 .AddText(n.Title)
-                .AddText(n.Message)
-                .BuildNotification();
+                .AddText(n.Message);
+            // M8: an update the user installs by hand (automatic installing off), LEO.md §24.4.
+            if (n.Kind == NotificationKind.UpdateAvailable)
+            {
+                builder.AddButton(new AppNotificationButton("Update now").AddArgument("action", "update"));
+                builder.AddButton(new AppNotificationButton("Later").AddArgument("action", "later"));
+            }
+            else if (n.Kind == NotificationKind.Updated)
+            {
+                builder.AddButton(new AppNotificationButton("Release notes").AddArgument("action", "notes"));
+            }
+            var toast = builder.BuildNotification();
             toast.Group = "leo";
             toast.Tag = n.Kind.ToString(); // a newer failover toast replaces the previous one
             AppNotificationManager.Default.Show(toast);

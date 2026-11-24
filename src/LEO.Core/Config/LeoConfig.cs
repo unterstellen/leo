@@ -31,6 +31,9 @@ public sealed class LeoConfig
     public List<Leo.Core.Profiles.Profile> Profiles { get; set; } = [];
 
     public Leo.Core.Profiles.ProfileState ProfileState { get; set; } = new();
+
+    /// <summary>Automatic updates from GitHub Releases (M8, LEO.md §24.4). Machine-wide; optional in schema 2.</summary>
+    public Leo.Core.Updates.UpdateSettings Updates { get; set; } = new();
 }
 
 public sealed class AdapterSettings

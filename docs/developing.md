@@ -80,7 +80,7 @@ Then, depending on what you changed:
 ## 8. Things to know
 
 - **Your real network is the test bench.** The deployed service really changes interface priorities and, with split tunneling on, routing. If the internet acts up: **Uninstall service** hands everything back to Windows.
-- The app adds itself to "start at login" the first time it runs (pointing at your Debug build). Turn it off in LEO's Settings if you don't want that.
+- A dev build of the app adds itself to "start at login" (HKCU) the first time it runs (pointing at your Debug build). Turn it off in LEO's Settings if you don't want that. An MSI install uses a machine-wide entry instead (section 10).
 - The project rules for UI code: actions only from Click handlers, one dialog at a time, nothing that silently ignores a click (show it disabled instead), no em dashes in UI text. Cards and list rows are laid out top to bottom: the main information first (name, details, "Now:"), checkboxes on their own row below it, buttons on the last row.
 - `bin\`, `obj\`, `artifacts\` and Rider's `.idea\` folder are never committed.
 
@@ -95,4 +95,25 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # start the 
 .\tools\dev-service.ps1 uninstall            # remove the service
 ```
 
-Coming with M8 (`LEO.md` §24): a command that builds the MSI installer locally (unsigned, for testing) and the release workflow on GitHub that builds and signs real releases.
+## 10. Building the installer and releases (M8)
+
+**Local test MSI (unsigned):**
+
+```powershell
+.\tools\get-engine.ps1          # once: the pinned engine (artifacts\engine\mihomo.exe)
+.\tools\build-release.ps1       # artifacts\release\LEO-<version>-x64.msi + payload-signatures.txt
+```
+
+It publishes the app and the service self-contained (.NET included, ReadyToRun only for LEO's own files, English only) into one install folder, stops if the two publish the same file with different content, lists every exe/dll with its signature status, and builds the MSI with WiX v5 (from NuGet). It never signs. Smart App Control blocks unsigned builds, so test the MSI on a PC or VM where it's off, **not** on top of your dev setup: the MSI removes a dev-deployed service (`tools\dev-service.ps1 deploy`), and `dev-service.ps1` refuses to deploy over an MSI install.
+
+What an installed LEO does differently from a dev build:
+
+- **Start at login:** the MSI writes one machine-wide `HKLM\...\Run\LEO` entry; each user's Settings switch is stored in `ui.json`. The installed app removes an old HKCU entry (the dev one) the first time it runs.
+- **Signed builds only** (release workflow): pipe clients other than LEO's own signed `LEO.exe` from the install folder get read-only access, the engine starts only if it's signed by LEO, and the updater is on. Dev builds are unsigned, so all three checks are off. On a signed install an admin can set `HKLM\SOFTWARE\UNTERSTELLEN\LEO\AllowUnsignedClients = 1` (DWORD) for the opt-in live tests.
+- The app checks that the pipe's server is LEO's service in session 0 from the install folder; a dev app only logs a mismatch.
+
+**Uninstall cleanup** is `LEO.Service.exe cleanup` (run by the MSI as SYSTEM, full uninstall only). Don't run it on your dev PC: it deletes all of LEO's settings for every user.
+
+**Releases** (`.github/workflows/release.yml`): you push a tag `vX.Y.Z` (or `vX.Y.Z-canary.N`). GitHub checks the tag (`tools/check-tag.ps1`), builds mihomo from source (`tools/build-engine.ps1`), runs the tests with it, publishes, then waits in the environment `release` for your approval before signing, and creates a **draft** release that you publish by hand. Signing is still a placeholder until the certificate authority is chosen (`LEO.md` §24.3): a tag push stops at that step and creates nothing. *Actions → Release → Run workflow* is a dry run that builds an unsigned MSI artifact.
+
+Version numbers: `0.MINOR.PATCH` while LEO is in Preview; every tag's x.y.z must be higher than every earlier one (Windows Installer compares only those three numbers). Release notes come from `CHANGELOG.md`.

@@ -1,0 +1,36 @@
+name: Hardware report ("works on my PC")
+description: Tell us how LEO does on your hardware, good or bad. This is how LEO gets tested beyond one PC.
+labels: [hardware]
+body:
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Settings → About → Copy diagnostics, then paste here.
+      render: text
+    validations:
+      required: true
+  - type: checkboxes
+    id: works
+    attributes:
+      label: What worked
+      options:
+        - label: Install (one admin prompt)
+        - label: All my adapters were listed
+        - label: Switching the Primary network
+        - label: Failover and switching back
+        - label: Wi-Fi (keep on a network, join a network)
+        - label: App rules (split tunneling by app)
+        - label: Website / IP rules
+        - label: Bonding
+        - label: Next to my VPN
+        - label: Uninstall left Windows networking as before
+  - type: textarea
+    id: problems
+    attributes:
+      label: What didn't work, or looked wrong?
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Wi-Fi card, Ethernet or USB adapters, phone (Android/iPhone) tethering, VPN client, antivirus, Smart App Control on or off.
