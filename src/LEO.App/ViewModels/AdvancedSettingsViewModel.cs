@@ -68,7 +68,7 @@ public sealed partial class AdvancedSettingsViewModel(ServiceConnection connecti
     {
         Fill(new HealthSettings { AutoFailover = _autoFailover });
         ErrorText = null;
-        StatusText = "Defaults filled in — press Save to apply them.";
+        StatusText = "Defaults filled in. Press Save to apply them.";
     }
 
     private void Fill(HealthSettings s)

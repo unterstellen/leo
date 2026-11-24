@@ -38,10 +38,43 @@ public sealed record SplitTunnelInfo(
     IReadOnlyList<DestinationRuleInfo>? Destinations = null,
     IReadOnlyList<NetworkDnsInfo>? NetworkDns = null,
     string? UnruledVia = null,      // M6: the VPN unruled traffic follows right now (display name), null = Primary
-    string? VpnBanner = null)       // M6: "<VPN> blocks traffic outside it…" / "Split tunneling paused by <VPN>…"
+    string? VpnBanner = null,       // M6: "<VPN> blocks traffic outside it…" / "Split tunneling paused by <VPN>…"
+    IReadOnlyList<BondInfo>? Bonds = null, // M7: bond groups (machine-wide), in the user's order
+    string? UnruledBondId = null,   // M7: "Everything else uses" this bond (setting), null = Primary
+    string? UnruledBondNow = null)  // M7: the bond unruled traffic really uses right now (display name), null = not a bond
 {
     public static SplitTunnelInfo Empty { get; } = new(true, SplitTunnelEngineState.Off, null, [], [], []);
 }
+
+/// <summary>One network of a bond (M7) and its state right now.</summary>
+public sealed record BondMemberInfo(
+    string AdapterId,
+    string Name,
+    int Weight,
+    bool Present,       // the adapter exists (a tether may be unplugged)
+    bool Connected,
+    bool Usable,        // connected and has internet per LEO's health checks
+    bool Metered);      // Windows' metered flag (shown only; LEO never limits it)
+
+/// <summary>A bond group (M7, LEO.md §22) and where its traffic goes right now.</summary>
+public sealed record BondInfo(
+    string Id,
+    string Name,
+    BondMode Mode,
+    OnTargetDown OnAllDown,
+    IReadOnlyList<BondMemberInfo> Members,
+    int UsableCount,
+    int RuleCount,      // enabled app/destination rules that use it
+    bool InUse,         // written into the engine (a rule or "Everything else uses" refers to it, engine running)
+    string RouteNow,    // "WiFi + Ethernet", "Only WiFi (Ethernet is unavailable)", "Primary (no network in it is available)"
+    IReadOnlyList<string> Hints);
+
+/// <summary>Live per-member numbers of one bond (M7), counted from the engine's open connections. Nothing about destinations.</summary>
+public sealed record BondLiveMember(string AdapterId, int Connections, long Download, long Upload, bool? EngineAlive);
+
+public sealed record BondLive(string BondId, IReadOnlyList<BondLiveMember> Members);
+
+public sealed record BondsLiveInfo(bool EngineRunning, IReadOnlyList<BondLive> Bonds);
 
 /// <summary>A destination rule (M4) plus where its traffic goes right now.</summary>
 public sealed record DestinationRuleInfo(

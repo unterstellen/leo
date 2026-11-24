@@ -9,25 +9,36 @@ namespace Leo.App.ViewModels;
 /// <summary>
 /// "Wi-Fi networks" dialog for one Wi-Fi adapter: scan, pin ("keep connected"), connect (LEO.md §5.5).
 /// <para>
-/// Every action goes through <see cref="TryBeginAction"/>: one at a time, a short settle window after each,
-/// and only for rows that are still in the current list. The list is rebuilt after each action, and its
-/// recycled row elements once replayed a queued click onto a *different* network — this gate makes that
-/// impossible.
+/// Every action goes through <see cref="TryBeginAction"/>: one at a time, and only for rows that are still in the
+/// current list. The list is rebuilt after each action, and its recycled row elements once replayed a queued click
+/// onto a *different* network — the stale-row check makes that impossible.
+/// </para>
+/// <para>
+/// While an action or scan runs, the row controls and Rescan are visibly disabled (spinner + status text), so a
+/// click is never silently ignored. There is no time window after an action: the next click works as soon as the
+/// controls are enabled again.
 /// </para>
 /// </summary>
 public sealed partial class WifiNetworksViewModel(ServiceConnection connection, AdapterInfo adapter, bool canEdit) : ObservableObject
 {
-    private static readonly TimeSpan SettleTime = TimeSpan.FromSeconds(1.5);
-
     private List<string> _pins = [.. adapter.PinnedSsids];
-    private DateTime _quietUntil = DateTime.MinValue;
 
     public string AdapterName => adapter.DisplayName;
     public bool CanEdit => canEdit;
     public bool IsPrimaryAdapter => adapter.IsPrimary;
     public ObservableCollection<WifiRowViewModel> Networks { get; } = [];
 
-    [ObservableProperty] public partial bool IsBusy { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsIdle))]
+    public partial bool IsBusy { get; set; }
+
+    /// <summary>Rescan and the row controls are enabled only while nothing runs.</summary>
+    public bool IsIdle => !IsBusy;
+
+    partial void OnIsBusyChanged(bool value)
+    {
+        foreach (var row in Networks) row.NotifyIdleChanged();
+    }
     [ObservableProperty] public partial string StatusText { get; set; } = "";
     [ObservableProperty] public partial string? ErrorText { get; set; }
 
@@ -59,7 +70,6 @@ public sealed partial class WifiNetworksViewModel(ServiceConnection connection, 
         foreach (var n in list) Networks.Add(new WifiRowViewModel(this, n));
         _pins = list.Where(n => n.IsPinned).Select(n => n.Ssid)
             .OrderBy(s => _pins.IndexOf(s) is var i && i >= 0 ? i : int.MaxValue).ToList();
-        _quietUntil = DateTime.UtcNow + SettleTime;
 
         StatusText = list.Count == 0 ? "No networks in range." : $"{list.Count(n => n.IsVisible)} network(s) in range.";
     }
@@ -71,7 +81,7 @@ public sealed partial class WifiNetworksViewModel(ServiceConnection connection, 
     private bool TryBeginAction(WifiRowViewModel row, string what)
     {
         if (!CanEdit) return false;
-        if (IsBusy || DateTime.UtcNow < _quietUntil || !Networks.Contains(row))
+        if (IsBusy || !Networks.Contains(row))
         {
             UiLog.Write($"Wi-Fi: ignored {what} '{row.Ssid}' on {AdapterName} (busy={IsBusy}, stale={!Networks.Contains(row)})");
             return false;
@@ -93,7 +103,6 @@ public sealed partial class WifiNetworksViewModel(ServiceConnection connection, 
         IsBusy = true;
         var error = await connection.TryInvokeAsync(c => c.SetWifiPinsAsync(adapter.Id, pins));
         IsBusy = false;
-        _quietUntil = DateTime.UtcNow + SettleTime;
         if (error is not null)
         {
             ErrorText = error;
@@ -128,7 +137,6 @@ public sealed partial class WifiNetworksViewModel(ServiceConnection connection, 
         if (error?.Code == LeoErrorCodes.PasswordRequired)
         {
             row.ShowPassword = true;
-            _quietUntil = DateTime.UtcNow + SettleTime;
             StatusText = $"'{row.Ssid}' needs its password the first time.";
             return;
         }
@@ -136,7 +144,6 @@ public sealed partial class WifiNetworksViewModel(ServiceConnection connection, 
         {
             ErrorText = error.Message;
             StatusText = "";
-            _quietUntil = DateTime.UtcNow + SettleTime;
             return;
         }
         await LoadAsync(rescan: false);
@@ -171,8 +178,13 @@ public sealed partial class WifiRowViewModel : ObservableObject
     public bool IsConnected => Info.IsConnected;
     public bool CanEdit => _owner.CanEdit;
     public bool CanConnect => _owner.CanEdit && Info.IsVisible && !Info.IsConnected;
+
+    /// <summary>Enabled state of this row's checkbox and buttons: off (greyed) while the dialog is busy.</summary>
+    public bool CanAct => _owner.CanEdit && _owner.IsIdle;
+
+    internal void NotifyIdleChanged() => OnPropertyChanged(nameof(CanAct));
     public bool CanDisconnect => _owner.CanEdit && Info.IsConnected;
-    public string SignalText => Info.IsVisible ? $"{Info.SignalPercent}%" : "—";
+    public string SignalText => Info.IsVisible ? $"{Info.SignalPercent}%" : "";
 
     public string Details
     {

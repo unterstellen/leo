@@ -78,10 +78,10 @@ public static class HealthSettingsValidator
     /// <summary>Returns a user-facing problem, or null when the settings are acceptable.</summary>
     public static string? Validate(HealthSettings s)
     {
-        if (s.ProbeIntervalSeconds is < 2 or > 300) return "Check interval must be 2–300 seconds.";
-        if (s.FailoverDelaySeconds is < 1 or > 300) return "Failover delay must be 1–300 seconds.";
-        if (s.FailbackDelaySeconds is < 5 or > 3600) return "Switch-back delay must be 5–3600 seconds.";
-        if (s.SlowLatencyMs is < 100 or > 10000) return "Slow threshold must be 100–10000 ms.";
+        if (s.ProbeIntervalSeconds is < 2 or > 300) return "Check interval must be 2 to 300 seconds.";
+        if (s.FailoverDelaySeconds is < 1 or > 300) return "Failover delay must be 1 to 300 seconds.";
+        if (s.FailbackDelaySeconds is < 5 or > 3600) return "Switch-back delay must be 5 to 3600 seconds.";
+        if (s.SlowLatencyMs is < 100 or > 10000) return "Slow threshold must be 100 to 10000 ms.";
         if (s.ProbeTargets.Count is < 1 or > 4) return "Use 1 to 4 probe addresses.";
         foreach (var t in s.ProbeTargets)
         {

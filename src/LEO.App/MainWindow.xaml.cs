@@ -84,6 +84,9 @@ public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
             case "Destinations":
                 ContentFrame.Navigate(typeof(DestinationsPage));
                 break;
+            case "Bonding":
+                ContentFrame.Navigate(typeof(BondingPage));
+                break;
             case "Profiles":
                 ContentFrame.Navigate(typeof(ProfilesPage));
                 break;

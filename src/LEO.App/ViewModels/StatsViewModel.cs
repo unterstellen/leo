@@ -249,7 +249,7 @@ public sealed partial class AppUsageRowViewModel : ObservableObject, IKeyed
     {
         App = a.App;
         Network = a.NetworkName;
-        NowText = a.ReceiveBps + a.SendBps > 0 ? $"↓ {StatsViewModel.Rate(a.ReceiveBps)} ↑ {StatsViewModel.Rate(a.SendBps)}" : "–";
+        NowText = a.ReceiveBps + a.SendBps > 0 ? $"↓ {StatsViewModel.Rate(a.ReceiveBps)} ↑ {StatsViewModel.Rate(a.SendBps)}" : "Idle";
         TodayText = StatsViewModel.Bytes(a.Today.Received + a.Today.Sent);
         MonthText = StatsViewModel.Bytes(a.Month.Received + a.Month.Sent);
     }

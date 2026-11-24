@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="Leo.App.Pages.BondingPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:Leo.App.ViewModels"
+    xmlns:controls="using:Leo.App.Controls">
+    <ScrollViewer Padding="32,24,32,24">
+        <StackPanel Spacing="16" MaxWidth="960" HorizontalAlignment="Left">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Bonding" Style="{StaticResource TitleTextBlockStyle}" />
+                <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
+                           Text="A bond uses several networks together: new connections are spread over them, so browsing, downloads with many connections, torrents and several apps at once get roughly the combined speed. One single connection (one big file over one connection, a call, a game) always uses one network at that network's speed. Bonds are the same in every profile." />
+            </StackPanel>
+
+            <InfoBar IsClosable="False" Severity="Informational"
+                     IsOpen="{x:Bind ViewModel.StatusText, Mode=OneWay, Converter={StaticResource NotNullToBool}}"
+                     Message="{x:Bind ViewModel.StatusText, Mode=OneWay}" />
+            <InfoBar x:Name="ErrorBar" IsOpen="False" Severity="Error" Title="Couldn't apply that"
+                     Message="{x:Bind ViewModel.ErrorText, Mode=OneWay}" Closed="ErrorBar_Closed" />
+
+            <controls:WrapPanel HorizontalSpacing="8" VerticalSpacing="8">
+                <Button Click="Add_Click" IsEnabled="{x:Bind ViewModel.CanEdit, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}"
+                        AutomationProperties.Name="New bond">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE710;" FontSize="14" />
+                        <TextBlock Text="New bond" />
+                    </StackPanel>
+                </Button>
+                <Button Content="{x:Bind ViewModel.UnruledText, Mode=OneWay}" Click="Unruled_Click"
+                        IsEnabled="{x:Bind ViewModel.CanEdit, Mode=OneWay}"
+                        AutomationProperties.Name="{x:Bind ViewModel.UnruledText, Mode=OneWay}" />
+            </controls:WrapPanel>
+
+            <TextBlock Text="No bonds yet. Use “New bond” to combine two or more networks, then pick the bond as the network of an app or URL rule, or for everything else."
+                       Visibility="{x:Bind ViewModel.IsEmpty, Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+
+            <ItemsRepeater ItemsSource="{x:Bind ViewModel.Bonds}">
+                <ItemsRepeater.Layout>
+                    <StackLayout Spacing="8" />
+                </ItemsRepeater.Layout>
+                <ItemsRepeater.ItemTemplate>
+                    <DataTemplate x:DataType="vm:BondCardViewModel">
+                        <Border Style="{StaticResource LeoCardStyle}" Padding="16">
+                            <Grid ColumnSpacing="16" RowSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <FontIcon Glyph="&#xE71B;" FontSize="24" Width="40" VerticalAlignment="Top" Margin="0,4,0,0" />
+
+                                <StackPanel Grid.Column="1" Spacing="4">
+                                    <TextBlock Text="{x:Bind Name, Mode=OneWay}" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind ModeText, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind MembersText, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind RouteText, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind LiveText, Mode=OneWay}" Visibility="{x:Bind HasLive, Mode=OneWay}" TextWrapping="Wrap"
+                                               Style="{StaticResource CaptionTextBlockStyle}" />
+                                    <TextBlock Text="{x:Bind UsageText, Mode=OneWay}" Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{x:Bind HintsText, Mode=OneWay}" Visibility="{x:Bind HasHints, Mode=OneWay}" TextWrapping="Wrap"
+                                               Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                </StackPanel>
+
+                                <controls:WrapPanel Grid.Row="1" Grid.Column="1" HorizontalSpacing="6" VerticalSpacing="6">
+                                    <Button Click="Edit_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
+                                            AutomationProperties.Name="{x:Bind EditAutomationName, Mode=OneWay}">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE70F;" FontSize="14" />
+                                            <TextBlock Text="Edit" />
+                                        </StackPanel>
+                                    </Button>
+                                    <Button Click="Up_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanMoveUp, Mode=OneWay}"
+                                            AutomationProperties.Name="{x:Bind UpAutomationName, Mode=OneWay}">
+                                        <FontIcon Glyph="&#xE70E;" FontSize="14" />
+                                    </Button>
+                                    <Button Click="Down_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanMoveDown, Mode=OneWay}"
+                                            AutomationProperties.Name="{x:Bind DownAutomationName, Mode=OneWay}">
+                                        <FontIcon Glyph="&#xE70D;" FontSize="14" />
+                                    </Button>
+                                    <Button Click="Delete_Click" Tag="{x:Bind}" IsEnabled="{x:Bind CanEdit, Mode=OneWay}"
+                                            AutomationProperties.Name="{x:Bind DeleteAutomationName, Mode=OneWay}">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <FontIcon Glyph="&#xE74D;" FontSize="14" />
+                                            <TextBlock Text="Delete" />
+                                        </StackPanel>
+                                    </Button>
+                                </controls:WrapPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

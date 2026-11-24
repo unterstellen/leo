@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/LEO.App/Assets/leo-256.png" width="96" alt="LEO logo: a yellow face wearing dark glasses">
+  <img src="src/LEO.App/Assets/leo-256.png" width="96" alt="LEO logo: a gold-to-orange circle with a dark curved band">
 </p>
 
 <h1 align="center">LEO</h1>

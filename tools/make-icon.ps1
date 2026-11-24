@@ -1,35 +1,102 @@
 <#
 .SYNOPSIS
-  Renders the LEO mark (assets/leo.svg design) into src/LEO.App/Assets: leo.ico (16-256 px) + PNGs.
+  Renders the LEO logo (assets/leo.svg) into src/LEO.App/Assets: leo.ico (16-256 px) + PNGs.
 
 .DESCRIPTION
-  Draws with GDI+ so no external tools are needed. Small sizes (<= 24 px) use a simplified,
-  bolder variant (no arms/highlights, bigger lenses) so it stays legible in the tray.
-  Re-run after changing the design:  powershell -File tools\make-icon.ps1
+  Reads the logo straight from assets/leo.svg and draws it with GDI+, so no external tools are needed:
+  the visible circle (radial gradient) and the dark band path (linear gradient). The SVG's hidden layers
+  (display: none) are ignored. The path parser handles what the logo uses: M/m, C/c, L/l, H/h, V/v, Z.
+  Re-run after changing the logo:  powershell -File tools\make-icon.ps1
 #>
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
 $root = Split-Path $PSScriptRoot -Parent
+$svgPath = Join-Path $root 'assets\leo.svg'
 $outDir = Join-Path $root 'src\LEO.App\Assets'
 New-Item -ItemType Directory -Force $outDir | Out-Null
 
-function C([string]$hex, [int]$a = 255) {
-    $h = $hex.TrimStart('#')
-    [System.Drawing.Color]::FromArgb($a, [Convert]::ToInt32($h.Substring(0, 2), 16),
-        [Convert]::ToInt32($h.Substring(2, 2), 16), [Convert]::ToInt32($h.Substring(4, 2), 16))
+[xml]$svg = Get-Content $svgPath -Raw
+$ns = New-Object System.Xml.XmlNamespaceManager $svg.NameTable
+$ns.AddNamespace('s', 'http://www.w3.org/2000/svg')
+$inv = [System.Globalization.CultureInfo]::InvariantCulture
+function F([string]$v) { [double]::Parse($v, $inv) }
+function C([string]$hex) {
+    $h = $hex.Trim().TrimStart('#')
+    if ($h.Length -eq 3) { $h = -join ($h.ToCharArray() | ForEach-Object { "$_$_" }) } # "#000" → "000000"
+    if ($h -notmatch '^[0-9a-fA-F]{6}$') { # named colours ("gray", "white", …)
+        $n = [System.Drawing.Color]::FromName($hex.Trim())
+        if (-not $n.IsKnownColor) { throw "Unsupported colour '$hex' in assets/leo.svg" }
+        return [System.Drawing.Color]::FromArgb(255, $n.R, $n.G, $n.B)
+    }
+    [System.Drawing.Color]::FromArgb(255, [Convert]::ToInt32($h.Substring(0, 2), 16), [Convert]::ToInt32($h.Substring(2, 2), 16), [Convert]::ToInt32($h.Substring(4, 2), 16))
+}
+function Stops($gradient) { @($gradient.SelectNodes('s:stop', $ns) | ForEach-Object { C $_.'stop-color' }) }
+
+# gradientTransform: a list of translate / scale / rotate, applied right to left (SVG order).
+function Get-Matrix([string]$transform) {
+    $m = New-Object System.Drawing.Drawing2D.Matrix
+    foreach ($t in [regex]::Matches($transform, '(\w+)\(([^)]*)\)')) {
+        $a = @($t.Groups[2].Value -split '[\s,]+' | Where-Object { $_ } | ForEach-Object { [float](F $_) })
+        switch ($t.Groups[1].Value) {
+            'translate' { $m.Translate($a[0], $(if ($a.Count -gt 1) { $a[1] } else { 0 })) }
+            'scale' { $m.Scale($a[0], $(if ($a.Count -gt 1) { $a[1] } else { $a[0] })) }
+            'rotate' { $m.Rotate($a[0]) }
+        }
+    }
+    $m
+}
+function Map($matrix, [double]$x, [double]$y) {
+    $pts = [System.Drawing.PointF[]]@((New-Object System.Drawing.PointF ([float]$x), ([float]$y)))
+    $matrix.TransformPoints($pts)
+    $pts[0]
 }
 
-function RoundRect([float]$x, [float]$y, [float]$w, [float]$h, [float]$r) {
+# SVG path data → GraphicsPath (absolute and relative M, C, L, H, V, Z).
+function Get-PathFromSvg([string]$d) {
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $d = 2 * $r
-    $p.AddArc($x, $y, $d, $d, 180, 90)
-    $p.AddArc($x + $w - $d, $y, $d, $d, 270, 90)
-    $p.AddArc($x + $w - $d, $y + $h - $d, $d, $d, 0, 90)
-    $p.AddArc($x, $y + $h - $d, $d, $d, 90, 90)
-    $p.CloseFigure()
+    $tokens = [regex]::Matches($d, '[MmCcLlHhVvZz]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?') | ForEach-Object { $_.Value }
+    $i = 0; $cmd = ''; $x = 0.0; $y = 0.0; $sx = 0.0; $sy = 0.0
+    function Next { $script:i++; F $tokens[$script:i - 1] }
+    $script:i = 0
+    while ($script:i -lt $tokens.Count) {
+        if ($tokens[$script:i] -match '^[A-Za-z]$') { $cmd = $tokens[$script:i]; $script:i++ }
+        $rel = $cmd -cmatch '^[a-z]$'
+        switch -CaseSensitive ($cmd.ToUpperInvariant()) {
+            'M' {
+                $nx = Next; $ny = Next
+                if ($rel) { $nx += $x; $ny += $y }
+                $p.StartFigure(); $x = $nx; $y = $ny; $sx = $x; $sy = $y
+                $cmd = if ($rel) { 'l' } else { 'L' } # further pairs are line-tos
+            }
+            'L' {
+                $nx = Next; $ny = Next
+                if ($rel) { $nx += $x; $ny += $y }
+                $p.AddLine([float]$x, [float]$y, [float]$nx, [float]$ny); $x = $nx; $y = $ny
+            }
+            'H' { $nx = Next; if ($rel) { $nx += $x }; $p.AddLine([float]$x, [float]$y, [float]$nx, [float]$y); $x = $nx }
+            'V' { $ny = Next; if ($rel) { $ny += $y }; $p.AddLine([float]$x, [float]$y, [float]$x, [float]$ny); $y = $ny }
+            'C' {
+                $c = @(); for ($k = 0; $k -lt 6; $k++) { $c += Next }
+                if ($rel) { $c[0] += $x; $c[1] += $y; $c[2] += $x; $c[3] += $y; $c[4] += $x; $c[5] += $y }
+                $p.AddBezier([float]$x, [float]$y, [float]$c[0], [float]$c[1], [float]$c[2], [float]$c[3], [float]$c[4], [float]$c[5])
+                $x = $c[4]; $y = $c[5]
+            }
+            'Z' { $p.CloseFigure(); $x = $sx; $y = $sy }
+            default { throw "Unsupported path command '$cmd' in assets/leo.svg" }
+        }
+    }
     $p
 }
+
+# The visible logo: Layer_1's circle (radial gradient) + band path (linear gradient); hidden layers skipped.
+$layer = $svg.SelectSingleNode("//s:g[@id='Layer_1']", $ns)
+$circle = $layer.SelectSingleNode('.//s:circle', $ns)
+$bandNode = $layer.SelectNodes('.//s:path', $ns) | Where-Object { $_.class -ne 'st2' } | Select-Object -First 1
+$radial = $svg.SelectSingleNode("//s:radialGradient", $ns)
+$linear = $svg.SelectSingleNode("//s:linearGradient", $ns)
+$viewBox = @($svg.svg.viewBox -split '\s+' | ForEach-Object { F $_ })
+$box = $viewBox[2]
 
 function Render([int]$size) {
     $bmp = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
@@ -37,67 +104,34 @@ function Render([int]$size) {
     $g.SmoothingMode = 'AntiAlias'
     $g.PixelOffsetMode = 'HighQuality'
     $g.Clear([System.Drawing.Color]::Transparent)
-    $s = $size / 256.0
-    $g.ScaleTransform($s, $s)
-    $small = $size -le 24
-    $frame = C '#1E2128'
+    $g.ScaleTransform([float]($size / $box), [float]($size / $box))
 
-    # Face
-    $inset = if ($small) { 6 } else { 8 }
-    $faceRect = New-Object System.Drawing.RectangleF $inset, $inset, (256 - 2 * $inset), (256 - 2 * $inset)
-    $facePath = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $facePath.AddEllipse($faceRect)
-    $grad = New-Object System.Drawing.Drawing2D.PathGradientBrush $facePath
-    $grad.CenterPoint = New-Object System.Drawing.PointF 102, 82
-    $grad.CenterColor = C '#FFE36E'
-    $grad.SurroundColors = @(C '#F2A60C')
-    $blend = New-Object System.Drawing.Drawing2D.ColorBlend 3
-    $blend.Colors = @((C '#F2A60C'), (C '#FFC83D'), (C '#FFE36E'))
-    $blend.Positions = @(0.0, 0.45, 1.0)
-    $grad.InterpolationColors = $blend
-    $g.FillPath($grad, $facePath)
-    $edge = New-Object System.Drawing.Pen (C '#D08A00'), ($(if ($small) { 12 } else { 6 }))
-    $g.DrawEllipse($edge, $faceRect)
+    # Circle, filled with the radial gradient (centre/radius mapped through its gradientTransform).
+    $cx = F $circle.cx; $cy = F $circle.cy; $r = F $circle.r
+    $face = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $face.AddEllipse([float]($cx - $r), [float]($cy - $r), [float](2 * $r), [float](2 * $r))
+    $rm = Get-Matrix $radial.gradientTransform
+    $gc = Map $rm (F $radial.cx) (F $radial.cy)
+    $edge = Map $rm ((F $radial.cx) + (F $radial.r)) (F $radial.cy)
+    $gr = [Math]::Sqrt([Math]::Pow($edge.X - $gc.X, 2) + [Math]::Pow($edge.Y - $gc.Y, 2))
+    $gradPath = New-Object System.Drawing.Drawing2D.GraphicsPath
+    $gradPath.AddEllipse([float]($gc.X - $gr), [float]($gc.Y - $gr), [float](2 * $gr), [float](2 * $gr))
+    $rs = Stops $radial
+    $brush = New-Object System.Drawing.Drawing2D.PathGradientBrush $gradPath
+    $brush.CenterPoint = $gc
+    $brush.CenterColor = $rs[0]
+    $brush.SurroundColors = @($rs[-1])
+    $g.FillPath($brush, $face)
 
-    if ($small) {
-        # Bold glasses: two big dark lenses + thick bridge.
-        $lw = 22
-        $pen = New-Object System.Drawing.Pen $frame, $lw
-        $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
-        $g.DrawLine($pen, 112, 112, 144, 112)
-        $lensBrush = New-Object System.Drawing.SolidBrush (C '#1E2128')
-        foreach ($x in 34, 140) {
-            $lens = RoundRect $x 80 82 70 28
-            $g.FillPath($lensBrush, $lens)
-        }
-    }
-    else {
-        $pen = New-Object System.Drawing.Pen $frame, 12
-        $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
-        # temples
-        $g.DrawLine($pen, 30, 104, 54, 100)
-        $g.DrawLine($pen, 226, 104, 202, 100)
-        # bridge
-        $bridge = New-Object System.Drawing.Drawing2D.GraphicsPath
-        $bridge.AddBezier(112, 106, 122, 98, 134, 98, 144, 106)
-        $g.DrawPath($pen, $bridge)
-        # lenses
-        $lensBrush = New-Object System.Drawing.Drawing2D.LinearGradientBrush (New-Object System.Drawing.PointF 0, 88), (New-Object System.Drawing.PointF 0, 144), (C '#3A3F4B'), (C '#14161B')
-        $rim = New-Object System.Drawing.Pen $frame, 10
-        foreach ($x in 50, 140) {
-            $lens = RoundRect $x 88 66 56 22
-            $g.FillPath($lensBrush, $lens)
-            $g.DrawPath($rim, $lens)
-        }
-        # highlights
-        $hi = New-Object System.Drawing.Pen (C '#FFFFFF' 140), 7
-        $hi.StartCap = 'Round'; $hi.EndCap = 'Round'
-        foreach ($dx in 0, 90) {
-            $h = New-Object System.Drawing.Drawing2D.GraphicsPath
-            $h.AddBezier((64 + $dx), 104, (67 + $dx), 99, (74 + $dx), 96, (82 + $dx), 96)
-            $g.DrawPath($hi, $h)
-        }
-    }
+    # Band, filled with the linear gradient (end points mapped through its gradientTransform).
+    $band = Get-PathFromSvg $bandNode.d
+    $lm = Get-Matrix $linear.gradientTransform
+    $p1 = Map $lm (F $linear.x1) (F $linear.y1)
+    $p2 = Map $lm (F $linear.x2) (F $linear.y2)
+    $ls = Stops $linear
+    $lin = New-Object System.Drawing.Drawing2D.LinearGradientBrush $p1, $p2, $ls[0], $ls[-1]
+    $lin.WrapMode = 'TileFlipXY'
+    $g.FillPath($lin, $band)
 
     $g.Dispose()
     $bmp
@@ -126,7 +160,7 @@ function ToDib([System.Drawing.Bitmap]$bmp) {
 }
 
 $sizes = 16, 20, 24, 32, 40, 48, 64, 96, 128, 256
-$pngs = @()
+$frames = @()
 foreach ($sz in $sizes) {
     $bmp = Render $sz
     if ($sz -ge 256) {
@@ -137,7 +171,7 @@ foreach ($sz in $sizes) {
     else {
         [byte[]]$bytes = ToDib $bmp
     }
-    $pngs += , @{ Size = $sz; Bytes = $bytes }
+    $frames += , @{ Size = $sz; Bytes = $bytes }
     if ($sz -in 32, 64, 256) { $bmp.Save((Join-Path $outDir "leo-$sz.png"), [System.Drawing.Imaging.ImageFormat]::Png) }
     $bmp.Dispose()
 }
@@ -146,16 +180,16 @@ foreach ($sz in $sizes) {
 $icoPath = Join-Path $outDir 'leo.ico'
 $fs = [System.IO.File]::Create($icoPath)
 $w = New-Object System.IO.BinaryWriter $fs
-$w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$pngs.Count)
-$offset = 6 + 16 * $pngs.Count
-foreach ($p in $pngs) {
+$w.Write([uint16]0); $w.Write([uint16]1); $w.Write([uint16]$frames.Count)
+$offset = 6 + 16 * $frames.Count
+foreach ($p in $frames) {
     $dim = if ($p.Size -ge 256) { 0 } else { $p.Size }
     $w.Write([byte]$dim); $w.Write([byte]$dim); $w.Write([byte]0); $w.Write([byte]0)
     $w.Write([uint16]1); $w.Write([uint16]32)
     $w.Write([uint32]$p.Bytes.Length); $w.Write([uint32]$offset)
     $offset += $p.Bytes.Length
 }
-foreach ($p in $pngs) { $w.Write([byte[]]$p.Bytes) }
+foreach ($p in $frames) { $w.Write([byte[]]$p.Bytes) }
 $w.Dispose()
 
 Write-Host "Wrote $icoPath and PNGs to $outDir"
