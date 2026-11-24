@@ -17,7 +17,7 @@ namespace Leo.Service.SplitTunnel;
 public sealed class MihomoEngine(ILogger<MihomoEngine> log) : IDisposable
 {
     public static string ExePath => Path.Combine(AppContext.BaseDirectory, "engine", "mihomo.exe");
-    public static string WorkDir => Path.Combine(LeoPaths.MachineData, "engine");
+    public static string WorkDir => LeoPaths.EngineDir;
     private static string ConfigPath => Path.Combine(WorkDir, "config.yaml");
     private const string TunDeviceName = "LEO";
 
@@ -38,6 +38,7 @@ public sealed class MihomoEngine(ILogger<MihomoEngine> log) : IDisposable
     public async Task StartAsync(EnginePlan plan, CancellationToken ct)
     {
         if (!IsInstalled) throw new FileNotFoundException("The split-tunneling engine isn't installed.", ExePath);
+        CheckEngineSignature();
         await StopAsync(ct);
         KillStrays();
 
@@ -48,13 +49,15 @@ public sealed class MihomoEngine(ILogger<MihomoEngine> log) : IDisposable
 
         var psi = new ProcessStartInfo(ExePath)
         {
-            ArgumentList = { "-d", WorkDir, "-f", ConfigPath },
+            ArgumentList = { },
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             WorkingDirectory = WorkDir,
         };
+
+        foreach (var a in Arguments(WorkDir, ConfigPath, secret)) psi.ArgumentList.Add(a);
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
         process.OutputDataReceived += (_, e) => LogEngineLine(e.Data);
@@ -283,9 +286,31 @@ public sealed class MihomoEngine(ILogger<MihomoEngine> log) : IDisposable
         var files = plan.ProviderFiles();
         foreach (var (name, content) in files) File.WriteAllText(Path.Combine(WorkDir, "rules", name + ".yaml"), content);
         _writtenProviders = new Dictionary<string, string>(files, StringComparer.Ordinal);
-        File.WriteAllText(ConfigPath, plan.ToConfigYaml(controller, secret));
+        File.WriteAllText(ConfigPath, plan.ToConfigYaml(controller));
         _controller = controller;
         _secret = secret;
+    }
+
+    /// <summary>
+    /// Engine command line. The API secret goes here (<c>-secret</c> overrides the config's secret, checked with
+    /// <c>mihomo -h</c> for v1.19.34) instead of into config.yaml (LEO.md §24.6).
+    /// </summary>
+    internal static IReadOnlyList<string> Arguments(string workDir, string configPath, string secret) =>
+        ["-d", workDir, "-f", configPath, "-secret", secret];
+
+    /// <summary>
+    /// Signed builds start only an engine signed by LEO's own signer and lying in LEO's install folder
+    /// (LEO.md §24.6 item 5). Unsigned (dev) builds skip the check.
+    /// </summary>
+    private void CheckEngineSignature()
+    {
+        var decision = Leo.Core.Security.ClientTrustPolicy.Decide(Leo.Service.Security.Authenticode.SelfSigner, allowUnsigned: false,
+            ExePath, AppContext.BaseDirectory, Leo.Service.Security.Authenticode.Verify);
+        if (Leo.Core.Security.ClientTrustPolicy.IsUntrusted(decision))
+        {
+            log.LogWarning("Engine not started: {Reason}", Leo.Core.Security.ClientTrustPolicy.Describe(decision).Replace("client", "engine"));
+            throw new InvalidOperationException("The split-tunneling engine isn't signed by LEO's publisher, so LEO didn't start it. Reinstall LEO.");
+        }
     }
 
     private string _controller = "";

@@ -190,7 +190,7 @@ public sealed class EnginePlanDestinationTests
         Assert.Contains(new GroupSelection("to-62939052-block", "net-62939052"), plan.Selections);
         Assert.True(plan.Sniff);
 
-        var yaml = plan.ToConfigYaml("127.0.0.1:1", "s");
+        var yaml = plan.ToConfigYaml("127.0.0.1:1");
         var rules = yaml[yaml.IndexOf("rules:", StringComparison.Ordinal)..];
         Assert.True(rules.IndexOf("DOMAIN-SUFFIX,example.com", StringComparison.Ordinal) < rules.IndexOf("RULE-SET,exact-", StringComparison.Ordinal));
         Assert.True(rules.IndexOf("RULE-SET,exact-", StringComparison.Ordinal) < rules.IndexOf("MATCH,", StringComparison.Ordinal));
@@ -205,7 +205,7 @@ public sealed class EnginePlanDestinationTests
         Assert.Equal(["www.only.test", "+.example.com"], dns.Policy.Select(p => p.Domain)); // match order: exact first
         Assert.Equal(["192.168.42.129#net-62939052"], dns.Policy[1].Servers); // IPv6 link-local DNS left out
 
-        var yaml = plan.ToConfigYaml("127.0.0.1:1", "s");
+        var yaml = plan.ToConfigYaml("127.0.0.1:1");
         Assert.Contains("enhanced-mode: redir-host", yaml);
         Assert.Contains("dns-hijack: ['any:53']", yaml);
         Assert.Contains("  nameserver-policy:\n".Replace("\n", Environment.NewLine), yaml);
@@ -233,7 +233,7 @@ public sealed class EnginePlanDestinationTests
     {
         var none = EnginePlan.Build(Both(), WiFi, [], []);
         Assert.False(none.Sniff);
-        Assert.Contains("sniffer:" + Environment.NewLine + "  enable: false", none.ToConfigYaml("127.0.0.1:1", "s"));
+        Assert.Contains("sniffer:" + Environment.NewLine + "  enable: false", none.ToConfigYaml("127.0.0.1:1"));
         var ipOnly = EnginePlan.Build(Both(), WiFi, [], [], [Dest("203.0.113.0/24", kind: DestinationKind.IpRange)]);
         Assert.False(ipOnly.Sniff);
         Assert.NotEqual(none.StructureKey, ipOnly.StructureKey);

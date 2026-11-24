@@ -5,8 +5,8 @@ using Leo.Core;
 namespace Leo.Service;
 
 /// <summary>
-/// `LEO.Service.exe install [--start]` / `LEO.Service.exe uninstall`.
-/// Dev convenience until the WiX MSI (M8) takes over service registration.
+/// `LEO.Service.exe install [--start]` / `uninstall`: dev convenience for tools\dev-service.ps1 (the MSI registers
+/// the service itself). `cleanup` and `remove-dev-install` are run by the MSI (LEO.md §24.2, §24.5).
 /// </summary>
 internal static class ServiceInstaller
 {
@@ -22,6 +22,8 @@ internal static class ServiceInstaller
         {
             "install" => Install(start: options.Contains("--start")),
             "uninstall" => Uninstall(),
+            "cleanup" => Setup.UninstallCleanup.Run(Console.Out),
+            "remove-dev-install" => Setup.DevInstallRemover.Run(Console.Out),
             _ => 1,
         };
     }
@@ -49,7 +51,10 @@ internal static class ServiceInstaller
         return start ? Sc($"start {name}") : 0;
     }
 
-    private static int Uninstall()
+    private static int Uninstall() => RemoveService(Console.Out);
+
+    /// <summary>Stop (the service's stop path hands metrics back, §5.9), delete, then LEO's own firewall group.</summary>
+    internal static int RemoveService(TextWriter output)
     {
         var name = LeoInfo.ServiceName;
         Sc($"stop {name}");
@@ -57,13 +62,13 @@ internal static class ServiceInstaller
         var rc = Sc($"delete {name}");
         if (rc is 0 or 1060) // 1060 = does not exist
         {
-            Console.WriteLine($"LEO: service '{name}' removed.");
+            output.WriteLine($"LEO: service '{name}' removed.");
             try
             {
                 var n = Interop.FirewallRules.RemoveAll(); // only rules in LEO's own firewall group (LEO.md §21)
-                if (n > 0) Console.WriteLine($"LEO: removed {n} LEO firewall rule(s).");
+                if (n > 0) output.WriteLine($"LEO: removed {n} LEO firewall rule(s).");
             }
-            catch (Exception ex) { Console.Error.WriteLine($"LEO: firewall cleanup failed: {ex.Message}"); }
+            catch (Exception ex) { output.WriteLine($"LEO: firewall cleanup failed: {ex.Message}"); }
             return 0;
         }
         return rc;

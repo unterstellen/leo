@@ -85,6 +85,9 @@ public partial class App : Application
             }
         };
 
+        // Restart Manager (MSI update) or sign-out: close cleanly instead of leaving files in use (LEO.md §24.2).
+        SessionEndWatcher.Attach(MainWindowHandle, ExitApp);
+
         if (!Program.StartInTray)
         {
             ShowMainWindow();

@@ -5,6 +5,12 @@
     <AssemblyName>LEO.Service</AssemblyName>
     <OutputType>Exe</OutputType>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!--
+      StreamJsonRpc -> Microsoft.VisualStudio.Threading.Only (net8.0-windows asset) declares a framework reference to
+      Microsoft.WindowsDesktop.App.WPF, which made the service's runtimeconfig ask for the whole WPF/WinForms framework.
+      The service never touches WPF (no Dispatcher, no UI thread), so the transitive reference is dropped (LEO.md §24.1).
+    -->
+    <DisableTransitiveFrameworkReferences>true</DisableTransitiveFrameworkReferences>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" />

@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LEO MSI (LEO.md §24.2, §24.5). Per-machine, x64, one admin prompt (every custom action is deferred and runs as
+  SYSTEM inside the elevated transaction). One UpgradeCode forever; a new ProductCode per build.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="LEO"
+           Manufacturer="UNTERSTELLEN"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="C17E6E01-40E8-4381-AF33-BCA6DCF81643"
+           Scope="perMachine"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="LEO network manager" Manufacturer="UNTERSTELLEN" />
+
+    <!-- Old version fully removed, new one installed, one transaction. Downgrades refused. -->
+    <MajorUpgrade Schedule="afterInstallValidate"
+                  DowngradeErrorMessage="A newer LEO is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Windows 11 (build 22000 or later), 64-bit. -->
+    <Property Id="LEO_WINBUILD">
+      <RegistrySearch Id="WinBuild" Root="HKLM" Key="SOFTWARE\Microsoft\Windows NT\CurrentVersion" Name="CurrentBuildNumber" Type="raw" />
+    </Property>
+    <Launch Condition="Installed OR VersionNT64" Message="LEO needs 64-bit Windows 11." />
+    <Launch Condition="Installed OR LEO_WINBUILD &gt;= 22000" Message="LEO needs Windows 11 (build 22000 or later)." />
+
+    <!-- Add/remove programs: uninstall only (no modify/repair), LEO's icon and links. -->
+    <Icon Id="LeoIcon" SourceFile="$(var.AssetsDir)\leo.ico" />
+    <Property Id="ARPPRODUCTICON" Value="LeoIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/unterstellen/leo" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/unterstellen/leo/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/unterstellen/leo/releases" />
+
+    <!--
+      "Start LEO at login" (checkbox, on by default; silent installs: START_AT_LOGIN=0|1). Remembered across upgrades:
+      a value given on the command line wins, else the saved one, else on.
+    -->
+    <Property Id="START_AT_LOGIN" Secure="yes" />
+    <Property Id="LEO_SAVED_START_AT_LOGIN" Secure="yes">
+      <RegistrySearch Id="SavedStartAtLogin" Root="HKLM" Key="SOFTWARE\UNTERSTELLEN\LEO" Name="StartAtLogin" Type="raw" />
+    </Property>
+    <SetProperty Action="LeoLoginFromSaved" Id="START_AT_LOGIN" Value="[LEO_SAVED_START_AT_LOGIN]" After="AppSearch" Sequence="both"
+                 Condition="NOT START_AT_LOGIN AND LEO_SAVED_START_AT_LOGIN" />
+    <SetProperty Action="LeoLoginDefault" Id="START_AT_LOGIN" Value="1" After="LeoLoginFromSaved" Sequence="both"
+                 Condition="NOT START_AT_LOGIN" />
+    <!-- The dialog's checkbox works on LEO_LOGIN_UI; its Install button writes START_AT_LOGIN back as "1" or "0". -->
+    <SetProperty Action="LeoLoginUi" Id="LEO_LOGIN_UI" Value="1" After="LeoLoginDefault" Sequence="ui"
+                 Condition="START_AT_LOGIN = &quot;1&quot;" />
+
+    <!-- "Open LEO now" on the last page. -->
+    <Property Id="LAUNCH_LEO" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="PublisherFolder" Name="UNTERSTELLEN">
+        <Directory Id="INSTALLFOLDER" Name="LEO" />
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="System64Folder" />
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DataPublisherFolder" Name="UNTERSTELLEN">
+        <Directory Id="DATAFOLDER" Name="LEO">
+          <Directory Id="ENGINEDATAFOLDER" Name="engine" />
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="LEO" Level="1" AllowAbsent="no">
+      <ComponentGroupRef Id="Payload" />
+      <ComponentRef Id="LeoApp" />
+      <ComponentRef Id="LeoService" />
+      <ComponentRef Id="LoginStart" />
+      <ComponentRef Id="LoginStartChoice" />
+      <ComponentRef Id="DataFolders" />
+    </Feature>
+
+    <!-- The UI (LEO.exe): Start menu shortcut with LEO's AppUserModelID, so toasts and the taskbar group work unpackaged. -->
+    <Component Id="LeoApp" Directory="INSTALLFOLDER" Guid="6E8A3A3B-0E3B-4C6E-9B65-3B1A7C2F5D01">
+      <File Id="LeoExe" Source="$(var.PayloadDir)LEO.exe" KeyPath="yes">
+        <Shortcut Id="LeoShortcut" Directory="ProgramMenuFolder" Name="LEO" Description="LEO network manager"
+                  WorkingDirectory="INSTALLFOLDER" Icon="LeoIcon" Advertise="no">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="UNTERSTELLEN.LEO" />
+        </Shortcut>
+      </File>
+    </Component>
+
+    <!--
+      The service: LocalSystem, automatic. Recovery (restart after 5 / 10 / 30 s, reset daily, also on non-crash
+      failures) is set by the LeoServiceRecovery actions below with sc.exe, as LEO.Service.exe install did: Windows
+      Installer's own MsiServiceConfigFailureActions table is documented as unreliable (WiX warning WIX1149).
+    -->
+    <Component Id="LeoService" Directory="INSTALLFOLDER" Guid="9B1F4C2D-7A3E-4D5B-8C6F-1E2D3C4B5A03">
+      <File Id="LeoServiceExe" Source="$(var.PayloadDir)LEO.Service.exe" KeyPath="yes" />
+      <ServiceInstall Id="LeoServiceInstall"
+                      Name="LEO"
+                      DisplayName="LEO Network Engine"
+                      Description="LEO multi-network manager and split-tunneling engine by UNTERSTELLEN."
+                      Type="ownProcess"
+                      Start="auto"
+                      Account="LocalSystem"
+                      ErrorControl="normal"
+                      Vital="yes" />
+      <!-- If the new service doesn't start, Windows Installer rolls the whole install back. -->
+      <ServiceControl Id="LeoServiceControl" Name="LEO" Start="install" Stop="both" Remove="both" Wait="yes" />
+    </Component>
+
+    <!-- "Start LEO at login": one machine-wide entry (user's decision, §24.2); each user switches it off in Settings. -->
+    <Component Id="LoginStart" Directory="INSTALLFOLDER" Guid="3A5C7E9B-2D4F-4A6B-9C8E-7F1A3B5D7C04" Condition="START_AT_LOGIN = &quot;1&quot;">
+      <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run" Name="LEO"
+                     Type="string" Value="&quot;[INSTALLFOLDER]LEO.exe&quot; --tray" KeyPath="yes" />
+    </Component>
+    <Component Id="LoginStartChoice" Directory="INSTALLFOLDER" Guid="5C7E9B1D-4F6A-4B8C-8E0A-9B3D5F7A9E05">
+      <RegistryValue Root="HKLM" Key="SOFTWARE\UNTERSTELLEN\LEO" Name="StartAtLogin" Type="string" Value="[START_AT_LOGIN]" KeyPath="yes" />
+    </Component>
+
+    <!--
+      ProgramData\UNTERSTELLEN\LEO owned by Administrators with the §8 ACL; engine\ SYSTEM + Administrators only (§24.6).
+      The service checks and repairs both on every start.
+    -->
+    <Component Id="DataFolders" Directory="DATAFOLDER" Guid="7E9B1D3F-6A8C-4D0E-8A2C-1D5F7B9C1A06">
+      <CreateFolder Directory="DataPublisherFolder">
+        <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+      <CreateFolder>
+        <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)" />
+      </CreateFolder>
+      <CreateFolder Directory="ENGINEDATAFOLDER">
+        <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+      </CreateFolder>
+      <RegistryValue Root="HKLM" Key="SOFTWARE\UNTERSTELLEN\LEO" Name="DataFolders" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!--
+      Deferred, as SYSTEM, inside the one elevated transaction (Impersonate="no"):
+      - remove-dev-install: a service "LEO" left by tools\dev-service.ps1 (…\LEO\Service\) is removed before ours is
+        registered; config in ProgramData is kept (§24.2).
+      - cleanup: full uninstall only, never on upgrade: puts networking back and deletes ALL settings (§24.5).
+      A failed step never blocks the install or the uninstall.
+    -->
+    <CustomAction Id="LeoRemoveDevInstall" FileRef="LeoServiceExe" ExeCommand="remove-dev-install"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="LeoCleanup" FileRef="LeoServiceExe" ExeCommand="cleanup"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="LeoServiceRecovery" Directory="System64Folder"
+                  ExeCommand="&quot;[System64Folder]sc.exe&quot; failure LEO reset= 86400 actions= restart/5000/restart/10000/restart/30000"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <CustomAction Id="LeoServiceRecoveryFlag" Directory="System64Folder"
+                  ExeCommand="&quot;[System64Folder]sc.exe&quot; failureflag LEO 1"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="LeoServiceRecovery" After="InstallServices" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="LeoServiceRecoveryFlag" After="LeoServiceRecovery" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="LeoRemoveDevInstall" After="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="LeoCleanup" After="DeleteServices" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <!-- "Open LEO now": started from the (non-elevated) UI process after the install, as the user. -->
+    <CustomAction Id="LeoLaunch" Directory="INSTALLFOLDER" ExeCommand="&quot;[INSTALLFOLDER]LEO.exe&quot;" Return="asyncNoWait" Impersonate="yes" />
+
+    <UIRef Id="LeoUi" />
+  </Package>
+
+  <!-- Everything else published (runtime, Windows App SDK, libraries, engine\mihomo.exe, LICENSE). -->
+  <Fragment>
+    <ComponentGroup Id="Payload" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PayloadDir)**">
+        <Exclude Files="$(var.PayloadDir)LEO.exe" />
+        <Exclude Files="$(var.PayloadDir)LEO.Service.exe" />
+        <Exclude Files="$(var.PayloadDir)**.pdb" />
+      </Files>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

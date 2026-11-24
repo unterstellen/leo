@@ -1,0 +1,23 @@
+<!--
+  LEO's MSI (LEO.md §24.2). Built with `dotnet build` (WiX SDK from NuGet, nothing installed on the machine).
+  Normally driven by tools\build-release.ps1 (local, unsigned) or .github\workflows\release.yml (signed):
+    dotnet build installer\LEO.Installer.wixproj -c Release -p:PayloadDir=<publish folder> -p:ProductVersion=<x.y.z>
+  The WiX SDK version is pinned in global.json ("msbuild-sdks").
+-->
+<Project Sdk="WixToolset.Sdk">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Platform>x64</Platform>
+    <!-- Not a .NET project: no central package versions, no runtime identifier from Directory.Build.props. -->
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <RuntimeIdentifier></RuntimeIdentifier>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">$(Version)</ProductVersion>
+    <PayloadDir Condition="'$(PayloadDir)' == ''">$(MSBuildThisFileDirectory)..\artifacts\release\payload\</PayloadDir>
+    <OutputName>LEO-$(ProductVersion)-x64</OutputName>
+    <DefineConstants>ProductVersion=$(ProductVersion);PayloadDir=$(PayloadDir);AssetsDir=$(MSBuildThisFileDirectory)..\src\LEO.App\Assets</DefineConstants>
+    <SuppressValidation>false</SuppressValidation>
+    <!-- ICE03: some third-party DLLs carry odd language ids in their version resources; harmless. -->
+    <SuppressIces>ICE03</SuppressIces>
+  </PropertyGroup>
+</Project>

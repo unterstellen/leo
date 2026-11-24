@@ -38,13 +38,18 @@ public static class PipeTransport
         return security;
     }
 
-    public static NamedPipeServerStream CreateServerStream(string pipeName) =>
+    /// <param name="firstInstance">
+    /// The service's very first instance: created with <see cref="PipeOptions.FirstPipeInstance"/>, so a program that
+    /// squatted the name before the service started makes creation fail (and the service logs it) instead of
+    /// silently sharing the name (LEO.md §24.6 item 3).
+    /// </param>
+    public static NamedPipeServerStream CreateServerStream(string pipeName, bool firstInstance = false) =>
         NamedPipeServerStreamAcl.Create(
             pipeName,
             PipeDirection.InOut,
             NamedPipeServerStream.MaxAllowedServerInstances,
             PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous,
+            PipeOptions.Asynchronous | (firstInstance ? PipeOptions.FirstPipeInstance : PipeOptions.None),
             // Must be non-zero: with 0-byte buffers a write only completes against a *real* read, but
             // System.IO.Pipelines (used by StreamJsonRpc) first waits with a zero-byte read → both sides stall.
             inBufferSize: 64 * 1024,

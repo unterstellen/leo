@@ -11,6 +11,12 @@
     <!-- Unpackaged, self-contained Windows App SDK: shipped by our own MSI (LEO.md §9). -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <!--
+      Same as LEO.Service: StreamJsonRpc -> Microsoft.VisualStudio.Threading.Only declares a WPF framework reference.
+      LEO's UI is WinUI 3 and never uses WPF; dropping it keeps the WPF/WinForms runtime out of the self-contained
+      payload and avoids a WindowsBase.dll clash with the service in the shared install folder (LEO.md §24.1).
+    -->
+    <DisableTransitiveFrameworkReferences>true</DisableTransitiveFrameworkReferences>
     <!-- Custom Main for single-instance redirection. -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>

@@ -257,7 +257,7 @@ public sealed class VpnEnginePlanTests
         var plan = EnginePlan.Build(Net(V(Ts, "Tailscale")), WiFi, [Curl(Ts)], []);
         Assert.Contains(plan.Outbounds, o => o.Name == "vpn-a1b2c3d4" && o.Alias == "Tailscale");
         Assert.DoesNotContain("vpn-a1b2c3d4", plan.Groups.Single(g => g.Name == EnginePlan.PrimaryGroup).Members);
-        Assert.Contains("interface-name: 'Tailscale'", plan.ToConfigYaml("127.0.0.1:9", "s"));
+        Assert.Contains("interface-name: 'Tailscale'", plan.ToConfigYaml("127.0.0.1:9"));
         Assert.Equal("vpn-a1b2c3d4", Selection(plan, EnginePlan.GroupName(Ts, OnTargetDown.Block)));
     }
 
@@ -284,7 +284,7 @@ public sealed class VpnEnginePlanTests
         Assert.All(plan.GuardRules, g => Assert.StartsWith("PROCESS-PATH-REGEX,", g));
         Assert.All(plan.GuardRules, g => Assert.EndsWith("," + EnginePlan.PrimaryGroup, g));
 
-        var yaml = plan.ToConfigYaml("127.0.0.1:9", "s");
+        var yaml = plan.ToConfigYaml("127.0.0.1:9");
         var rules = yaml[yaml.IndexOf("\nrules:", StringComparison.Ordinal)..].TrimStart('\n')
             .Split('\n').Skip(1).Where(l => l.Trim().Length > 0).ToList();
         for (var i = 0; i < plan.GuardRules.Count; i++) Assert.Contains("PROCESS-PATH-REGEX", rules[i]);

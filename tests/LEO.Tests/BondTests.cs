@@ -109,7 +109,7 @@ public sealed class BondTests
     public void Modes_Map_To_Engine_Groups_With_Leos_Own_Health_Check(BondMode mode, string type, string? strategy)
     {
         var plan = Plan([Phys(WiFi, "WiFi"), Phys(Eth, "Ethernet")], [Curl(BondTarget)], MakeBond(mode));
-        var yaml = plan.ToConfigYaml("127.0.0.1:9", "s");
+        var yaml = plan.ToConfigYaml("127.0.0.1:9");
         var block = GroupBlock(yaml, Group);
         Assert.Contains($"type: {type}", block);
         if (strategy is null) Assert.DoesNotContain("strategy:", block); else Assert.Contains($"strategy: {strategy}", block);
@@ -125,7 +125,7 @@ public sealed class BondTests
     public void Every_Load_Balance_Or_Url_Test_Group_Has_An_Explicit_Url()
     {
         var plan = Plan([Phys(WiFi, "WiFi"), Phys(Eth, "Ethernet")], [Curl(BondTarget)], MakeBond(BondMode.Fastest));
-        var yaml = plan.ToConfigYaml("127.0.0.1:9", "s");
+        var yaml = plan.ToConfigYaml("127.0.0.1:9");
         var groups = yaml.Split("\n  - name: ").Skip(1).Where(g => g.Contains("type: load-balance") || g.Contains("type: url-test")).ToList();
         Assert.NotEmpty(groups);
         Assert.All(groups, g => Assert.Contains("    url: ", g));
@@ -162,7 +162,7 @@ public sealed class BondTests
     {
         var unused = Plan([Phys(WiFi, "WiFi"), Phys(Eth, "Ethernet")], [Curl(Eth)], MakeBond());
         Assert.Empty(unused.Bonds);
-        Assert.DoesNotContain("load-balance", unused.ToConfigYaml("127.0.0.1:9", "s"));
+        Assert.DoesNotContain("load-balance", unused.ToConfigYaml("127.0.0.1:9"));
 
         var disabled = Curl(BondTarget);
         disabled.Enabled = false;
@@ -212,7 +212,7 @@ public sealed class BondTests
         Assert.Equal(Group, Selection(bond, EnginePlan.UnruledGroup));
         Assert.Equal([Group, EnginePlan.PrimaryGroup], bond.Groups.Single(g => g.Name == EnginePlan.UnruledGroup).Members);
         Assert.Equal(BondId, bond.UnruledBondId);
-        Assert.Contains("MATCH,LEO-UNRULED", bond.ToConfigYaml("127.0.0.1:9", "s"));
+        Assert.Contains("MATCH,LEO-UNRULED", bond.ToConfigYaml("127.0.0.1:9"));
 
         var vpnWins = Plan([.. net, Vpn(Ts, takesDefault: true)], [], MakeBond(), unruled: BondId);
         Assert.Equal("vpn-a1b2c3d4", Selection(vpnWins, EnginePlan.UnruledGroup));
@@ -357,7 +357,7 @@ public sealed class BondTests
         Directory.CreateDirectory(Path.Combine(dir, "rules"));
         try
         {
-            File.WriteAllText(Path.Combine(dir, "config.yaml"), plan.ToConfigYaml("127.0.0.1:9", "secret"));
+            File.WriteAllText(Path.Combine(dir, "config.yaml"), plan.ToConfigYaml("127.0.0.1:9"));
             foreach (var (name, content) in plan.ProviderFiles()) File.WriteAllText(Path.Combine(dir, "rules", name + ".yaml"), content);
             var psi = new ProcessStartInfo(engine) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
             foreach (var a in new[] { "-t", "-d", dir, "-f", Path.Combine(dir, "config.yaml") }) psi.ArgumentList.Add(a);

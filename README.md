@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/unterstellen/leo-windows/actions/workflows/build.yml"><img src="https://github.com/unterstellen/leo-windows/actions/workflows/build.yml/badge.svg?branch=canary" alt="Build"></a>
+  <a href="https://github.com/unterstellen/leo/actions/workflows/build.yml"><img src="https://github.com/unterstellen/leo/actions/workflows/build.yml/badge.svg?branch=canary" alt="Build"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License: GPL-3.0-or-later"></a>
   <img src="https://img.shields.io/badge/platform-Windows%2011%20x64-0078D4" alt="Windows 11 x64">
 </p>
@@ -65,8 +65,8 @@ Requirements: [.NET SDK 10.0.404+](https://dotnet.microsoft.com/download) (pinne
 Working on LEO in an IDE (JetBrains Rider, with ready-made run configurations in `.run/`): see [docs/developing.md](docs/developing.md).
 
 ```powershell
-git clone https://github.com/unterstellen/leo-windows.git
-cd leo-windows
+git clone https://github.com/unterstellen/leo.git
+cd leo
 dotnet build LEO.slnx
 dotnet test  tests\LEO.Tests
 ```

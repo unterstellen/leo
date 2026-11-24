@@ -23,6 +23,7 @@ public sealed class ServiceConnection : IAsyncDisposable
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(2);
     private readonly CancellationTokenSource _cts = new();
     private Task? _loop;
+    private bool _serverWarningLogged;
 
     public ConnectionState State { get; private set; } = ConnectionState.Connecting;
     public EngineStatus? Status { get; private set; }
@@ -107,6 +108,19 @@ public sealed class ServiceConnection : IAsyncDisposable
             try
             {
                 await using var stream = await PipeTransport.ConnectClientAsync(ct: ct);
+
+                // Pipe squatting (LEO.md §24.6): only LEO's own service, in session 0, from the install folder.
+                if (PipeServerCheck.Problem(PipeServerCheck.Identify(stream), LeoPaths.InstallDir) is { } problem)
+                {
+                    if (PipeServerCheck.ShouldEnforce(Environment.ProcessPath, LeoPaths.InstallDir))
+                    {
+                        if (State != ConnectionState.ServiceUnavailable) UiLog.Write($"Not using the control pipe: {problem}");
+                        throw new UnauthorizedAccessException(problem);
+                    }
+                    if (!_serverWarningLogged) UiLog.Write($"Development build, pipe server not checked: {problem}");
+                    _serverWarningLogged = true;
+                }
+
                 using var rpc = PipeTransport.CreateRpc(stream);
                 var control = rpc.Attach<ILeoControl>();
                 rpc.StartListening();
