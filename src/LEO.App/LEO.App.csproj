@@ -12,6 +12,12 @@
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <!--
+      Needed for `dotnet publish` of an unpackaged WinUI app: without it the publish output lacks LEO.pri and the
+      compiled XAML (*.xbf), so the installed app crashed right after creating its tray icon (found in the first MSI
+      test, 2026-11-24). Doesn't make LEO an MSIX package (WindowsPackageType stays None).
+    -->
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <!--
       Same as LEO.Service: StreamJsonRpc -> Microsoft.VisualStudio.Threading.Only declares a WPF framework reference.
       LEO's UI is WinUI 3 and never uses WPF; dropping it keeps the WPF/WinForms runtime out of the self-contained
       payload and avoids a WindowsBase.dll clash with the service in the shared install folder (LEO.md §24.1).

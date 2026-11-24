@@ -14,7 +14,7 @@ namespace Leo.Service.Updates;
 /// checks once a day, downloads into ProgramData\…\LEO\updates (SYSTEM + Administrators only), verifies the MSI
 /// (<see cref="UpdateVerifier"/>) and runs <c>msiexec /i … /qn</c>; the MSI's own upgrade replaces the files and
 /// restarts the service, and Restart Manager restarts the UI. Only admins can start an install from the UI.
-/// Unsigned (development) builds never update. GitHub is read without its REST API (see <see cref="ReleaseFeed"/>);
+/// Only official builds (release workflow) or code-signed services update; dev builds never do (LEO.md §26). GitHub is read without its REST API (see <see cref="ReleaseFeed"/>);
 /// the requests carry only "LEO/&lt;version&gt;" as User-Agent, nothing that identifies the PC.
 /// </summary>
 public sealed class UpdateService : BackgroundService
@@ -23,7 +23,7 @@ public sealed class UpdateService : BackgroundService
     private readonly NotificationHub _hub;
     private readonly ILogger<UpdateService> _log;
     private readonly UpdateVerifier _verifier;
-    private readonly Func<bool> _signed;
+    private readonly Func<bool> _updatesOn;
     private readonly HttpClient _noRedirect;
     private readonly HttpClient _http;
     private readonly SemaphoreSlim _work = new(1, 1);
@@ -39,13 +39,13 @@ public sealed class UpdateService : BackgroundService
     private string? _offeredVersion;
 
     public UpdateService(ConfigStore config, NotificationHub hub, ILogger<UpdateService> log,
-        UpdateVerifier? verifier = null, Func<bool>? signed = null, HttpMessageHandler? handler = null)
+        UpdateVerifier? verifier = null, Func<bool>? updatesOn = null, HttpMessageHandler? handler = null)
     {
         _config = config;
         _hub = hub;
         _log = log;
         _verifier = verifier ?? UpdateVerifier.ForThisService();
-        _signed = signed ?? (() => Leo.Service.Security.Authenticode.SelfSigner is not null);
+        _updatesOn = updatesOn ?? (() => LeoInfo.IsOfficialBuild || Leo.Service.Security.Authenticode.SelfSigner is not null);
         _noRedirect = Client(handler ?? new SocketsHttpHandler { AllowAutoRedirect = false }, TimeSpan.FromSeconds(30));
         _http = Client(handler ?? new SocketsHttpHandler { AllowAutoRedirect = true, MaxAutomaticRedirections = 5 }, TimeSpan.FromMinutes(15));
     }
@@ -67,10 +67,11 @@ public sealed class UpdateService : BackgroundService
         get
         {
             var settings = _config.Read(c => c.Updates);
-            var signed = _signed();
-            var signer = signed ? Leo.Service.Security.Authenticode.SelfSigner?.DisplayName : null;
-            var phase = signed ? _phase : UpdateState.Off;
-            var text = signed ? _phaseText : "Development build: updates are off.";
+            var on = _updatesOn();
+            var signer = Leo.Service.Security.Authenticode.SelfSigner?.DisplayName; // null: no code-signing certificate
+            var signed = signer is not null;
+            var phase = on ? _phase : UpdateState.Off;
+            var text = on ? _phaseText : "Development build: updates are off.";
             return new UpdateInfo(LeoInfo.Version, signed, signer, phase, text, _latest?.ToString(),
                 _latest is null ? null : ReleaseFeed.NotesUrl(_latest), _state.LastCheck,
                 settings.AutoCheck, settings.AutoInstall, UpdateChannels.Normalize(settings.Channel), _state.LastResult);
@@ -81,9 +82,9 @@ public sealed class UpdateService : BackgroundService
     {
         _state = LoadState();
         ReadPendingResult();
-        if (!_signed())
+        if (!_updatesOn())
         {
-            _log.LogInformation("Development build (unsigned): updates are off");
+            _log.LogInformation("Development build: updates are off");
             Publish();
             return;
         }
@@ -112,7 +113,7 @@ public sealed class UpdateService : BackgroundService
     /// <summary>"Check now" from Settings, or the daily check.</summary>
     public async Task<UpdateInfo> CheckAsync(bool automatic, CancellationToken ct)
     {
-        if (!_signed()) return Info;
+        if (!_updatesOn()) return Info;
         if (!await _work.WaitAsync(0, ct)) return Info; // a check, download or install is already running
         ReleaseVersion? found;
         try
@@ -145,7 +146,7 @@ public sealed class UpdateService : BackgroundService
             _work.Release();
         }
 
-        var action = UpdatePolicy.Decide(_config.Read(c => c.Updates), _signed(), found);
+        var action = UpdatePolicy.Decide(_config.Read(c => c.Updates), _updatesOn(), found);
         if (action == UpdateAction.Install && automatic)
         {
             await InstallAsync(ct);
@@ -162,7 +163,7 @@ public sealed class UpdateService : BackgroundService
     /// <summary>Download, verify, install. Callers check the client's access (admins only).</summary>
     public async Task InstallAsync(CancellationToken ct)
     {
-        if (!_signed()) throw new InvalidOperationException("This is a development build, so it doesn't install updates.");
+        if (!_updatesOn()) throw new InvalidOperationException("This is a development build, so it doesn't install updates.");
         var version = _latest ?? throw new InvalidOperationException("No update was found. Check for updates first.");
         if (!await _work.WaitAsync(0, ct)) throw new InvalidOperationException("An update is already being checked or installed.");
         var msi = Path.Combine(DownloadDir, ReleaseFeed.MsiName(version));
@@ -171,12 +172,15 @@ public sealed class UpdateService : BackgroundService
             Directory.CreateDirectory(DownloadDir);
             SetPhase(UpdateState.Downloading, $"Downloading LEO {version}");
             await DownloadAsync(ReleaseFeed.MsiUrl(version), msi, ct);
+            string? sig = null;
+            try { sig = await _http.GetStringAsync(ReleaseFeed.SigUrl(version), ct); }
+            catch (HttpRequestException) { /* missing: the verifier refuses the MSI and says why */ }
             string? sha = null;
             try { sha = ReleaseFeed.ShaFor(await _http.GetStringAsync(ReleaseFeed.SumsUrl(version), ct), ReleaseFeed.MsiName(version)); }
             catch (HttpRequestException) { /* optional extra check */ }
 
             SetPhase(UpdateState.Verifying, $"Checking LEO {version}");
-            if (_verifier.Problem(msi, version, _installed, sha) is { } problem)
+            if (_verifier.Problem(msi, sig, version, _installed, sha) is { } problem)
             {
                 TryDelete(msi);
                 Fail(version, problem);

@@ -47,13 +47,17 @@ The full design is in [LEO.md](LEO.md).
 
 LEO installs a background service and, while split tunneling is on, a virtual network adapter named **LEO**. Nothing else needs to be installed first (.NET and the Windows App SDK are included). Requirements: **Windows 11, x64**, administrator rights to install.
 
-New releases are code-signed, but Windows may still show *"Windows protected your PC"* (SmartScreen) for a new version until enough people have downloaded it. Choose *More info → Run anyway* if the publisher shown is LEO's.
+**LEO's Preview releases aren't code-signed yet** (a code-signing certificate comes later). What that means for you:
+
+- Windows shows *"Windows protected your PC"* and *Unknown publisher*. Choose *More info → Run anyway*, and the administrator prompt shows *Publisher: Unknown*. Download LEO only from this repository's [Releases](https://github.com/unterstellen/leo/releases); you can compare the file with `SHA256SUMS.txt` there.
+- **Smart App Control** (on by default on some freshly installed Windows 11 PCs) blocks LEO and offers no "run anyway". Check it under Windows Security → App & browser control → Smart App Control. To use LEO you'd have to turn it off, and Windows can't turn it back on without a reinstall, so decide whether that's worth it for you.
+- Some antivirus programs may flag a new unsigned network tool. If yours does, please report it in an issue.
 
 Installing on a company PC, silent installs: [docs/managed-pcs.md](docs/managed-pcs.md).
 
 ## Update
 
-LEO updates itself: once a day the service checks this repository's releases and installs a new signed version on its own. Split tunneling pauses for a few seconds while it does, and a notification tells you afterwards. Settings → Updates lets you switch automatic installing off (you then get *Update now*) or stop checking. Only administrators can install updates.
+LEO updates itself: once a day the service checks this repository's releases and installs a new version on its own, but only if the download carries LEO's own update signature (the `.sig` file next to each MSI), so nobody else can push an update to your PC. Split tunneling pauses for a few seconds while it does, and a notification tells you afterwards. Settings → Updates lets you switch automatic installing off (you then get *Update now*) or stop checking. Only administrators can install updates.
 
 ## Uninstall
 
@@ -109,7 +113,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe
 
 Local unsigned test MSI: `.\tools\build-release.ps1` (writes `artifacts\release\LEO-<version>-x64.msi`).
 
-> Unsigned local builds are blocked by **Smart App Control** if it's on. Development machines need it turned off; signed releases don't have this problem.
+> Unsigned builds (local builds, and Preview releases until LEO gets a code-signing certificate) are blocked by **Smart App Control** if it's on. Development machines need it turned off. Local builds never update themselves; only builds from the release workflow do.
 
 ## Project layout
 

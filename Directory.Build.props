@@ -19,6 +19,13 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
   <!--
+    Official builds (LEO.md §26): only the release workflow passes -p:LeoOfficialBuild=true (via
+    tools\build-release.ps1 -Official). LeoInfo.IsOfficialBuild reads it; only official builds update themselves.
+  -->
+  <ItemGroup Condition="'$(LeoOfficialBuild)' == 'true'">
+    <AssemblyMetadata Include="LeoOfficialBuild" Value="true" />
+  </ItemGroup>
+  <!--
     Release payload (LEO.md §24.1): `dotnet publish` makes self-contained, ReadyToRun builds, so nothing has to be
     installed first. Only while publishing: plain builds and tests stay framework-dependent and fast.
     No trimming, no single-file, no Native AOT (WinUI XAML, StreamJsonRpc and System.Text.Json use reflection).

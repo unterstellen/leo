@@ -23,11 +23,16 @@
 
 .PARAMETER MsiOnly
   Only build the MSI from an existing artifactselease\payload (the release workflow, after signing the payload).
+
+.PARAMETER Official
+  Release workflow only: marks the build as official (-p:LeoOfficialBuild=true), so it updates itself with LEO's
+  own update key (LEO.md §26). Local test builds leave it off and never update themselves.
 #>
 param(
     [string]$Version,
     [switch]$SkipMsi,
-    [switch]$MsiOnly
+    [switch]$MsiOnly,
+    [switch]$Official
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -51,6 +56,7 @@ if (-not $MsiOnly) {
 # ── 1. Publish ───────────────────────────────────────────────────────────────
 Remove-Item -Recurse -Force $appOut, $svcOut, $payload -ErrorAction SilentlyContinue
 $common = @('-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', "-p:Version=$Version", '-p:PublishReadyToRun=true', '-nologo')
+if ($Official) { $common += '-p:LeoOfficialBuild=true' }
 dotnet publish (Join-Path $root 'src\LEO.Service\LEO.Service.csproj') @common -o $svcOut
 if ($LASTEXITCODE -ne 0) { throw 'Publishing LEO.Service failed.' }
 dotnet publish (Join-Path $root 'src\LEO.App\LEO.App.csproj') @common -o $appOut
@@ -75,6 +81,11 @@ if ($clashes.Count -gt 0) {
     $clashes | ForEach-Object { Write-Host "  clash: $_" -ForegroundColor Red }
     throw "App and service publish the same file with different content ($($clashes.Count)). Align the package versions, or fall back to two folders (LEO.md §24.1)."
 }
+# The app's own resources (LEO.pri, with the compiled XAML inside). Without them the installed app crashes right after
+# creating its tray icon (first MSI test, 2026-11-24). LEO.App.csproj needs EnableMsixTooling for publish to include it.
+$pri = Join-Path $payload 'LEO.pri'
+if (-not (Test-Path $pri)) { throw "LEO.pri is missing from the payload: the app's XAML wouldn't load (EnableMsixTooling in LEO.App.csproj)." }
+if (-not (Select-String -Path $pri -Pattern 'XBF' -SimpleMatch -Quiet)) { throw "LEO.pri has no compiled XAML inside: the app's pages wouldn't load." }
 
 # ── 3. Engine + licence ──────────────────────────────────────────────────────
 $engine = Join-Path $root 'artifacts\engine\mihomo.exe'

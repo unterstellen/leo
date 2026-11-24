@@ -3,13 +3,16 @@
 #   check   → the tag is valid and its x.y.z is higher than every earlier tag's (Windows Installer rule, §24.2)
 #   engine  → mihomo built FROM SOURCE at the pinned tag + its corresponding source archive (GPL, §17)
 #   build   → tests WITH the source-built engine (mihomo -t runs), self-contained payload, clash check, PE list
-#   sign    → environment "release": WAITS FOR THE USER'S APPROVAL in GitHub, then signs the payload (LEO's own
-#             files + third-party files that arrive unsigned), builds the MSI from the signed files, signs the MSI,
-#             verifies every PE and the MSI
-#   release → a DRAFT GitHub release (MSI, SHA256SUMS.txt, mihomo source). The user tests it and publishes it by hand.
+#   sign    → environment "release": WAITS FOR THE USER'S APPROVAL in GitHub, then builds the MSI and writes LEO's own
+#             update signature (LEO-x.y.z-x64.msi.sig, secret LEO_UPDATE_KEY, LEO.md §26). Authenticode (a CA
+#             certificate, §24.3) is OPTIONAL and off until the repository/environment variable AUTHENTICODE = true:
+#             then the payload and the MSI are code-signed too and every PE is verified
+#   release → a DRAFT GitHub release (MSI, .sig, SHA256SUMS.txt, mihomo source). The user tests it and publishes it.
 #
 # Release gate (user's decision, §24.10 Q8): two clicks by the user, approve signing and publish the draft. With silent
 # automatic updates, a published release reaches every LEO PC within a day, so a person always looks first.
+# Until a certificate is bought (§26), releases are "unsigned Preview": Windows shows "Unknown publisher", Smart App
+# Control blocks LEO where it's on, and the updater trusts only LEO's own update key.
 #
 # Dry run (no signing, no release): Actions → Release → Run workflow. Builds everything up to an UNSIGNED MSI artifact.
 name: Release
@@ -103,9 +106,11 @@ jobs:
       # The artifact keeps its folder layout: artifacts/engine/mihomo.exe, artifacts/release/mihomo-…-source.tar.gz.
       - name: Test (with the source-built engine, so EngineConfigCheckTests run mihomo -t)
         run: dotnet test LEO.slnx -c Release
-      - name: Publish the payload (self-contained, clash check, PE list)
+      - name: Publish the payload (self-contained, official build, clash check, PE list)
         shell: pwsh
-        run: ./tools/build-release.ps1 -Version ${{ needs.check.outputs.version }} -SkipMsi
+        run: ./tools/build-release.ps1 -Version ${{ needs.check.outputs.version }} -SkipMsi -Official
+      - name: Update-key tool works
+        run: dotnet run tools/update-key.cs -- selftest
       - uses: actions/upload-artifact@v6
         with:
           name: payload
@@ -140,9 +145,11 @@ jobs:
     if: github.event_name == 'push'
     needs: [check, build]
     runs-on: windows-latest
-    # Required reviewer = the user (set in GitHub: Settings → Environments → release). Signing secrets live only here;
-    # forks and pull requests never see them.
+    # Required reviewer = the user (set in GitHub: Settings → Environments → release). Signing secrets live only here
+    # (LEO_UPDATE_KEY; later the CA's credentials); forks and pull requests never see them.
     environment: release
+    env:
+      AUTHENTICODE: ${{ vars.AUTHENTICODE == 'true' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -153,7 +160,8 @@ jobs:
           name: payload
           path: artifacts/release
 
-      - name: List the files to sign
+      - name: List the files to code-sign
+        if: env.AUTHENTICODE == 'true'
         shell: pwsh
         run: |
           # LEO's own binaries, mihomo, and every third-party PE that arrives unsigned (user's decision, §24.3).
@@ -166,30 +174,42 @@ jobs:
           Write-Host "$($files.Count) file(s) to sign:"; $files | ForEach-Object { Write-Host "  $($_.FullName.Substring($payload.Path.Length))" }
 
       # ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-      # │ PLACEHOLDER: SIGNING IS NOT SET UP YET. The certificate authority isn't chosen (LEO.md §24.3, §24.10 Q1).  │
-      # │ Until it is, a tag push stops HERE and no release is created: an unsigned LEO must never be published.    │
-      # │ When the CA is chosen, replace this step with the CA's signing action/CLI, e.g.:                          │
-      # │   - Azure Trusted Signing: azure/trusted-signing-action (OIDC login, no stored password)                 │
-      # │   - Certum SimplySign / an OV certificate in a cloud HSM: the vendor's CLI or signtool + PKCS#11           │
+      # │ OPTIONAL AUTHENTICODE (LEO.md §24.3, §26). Skipped while the variable AUTHENTICODE isn't "true": releases │
+      # │ are then "unsigned Preview" and protected by LEO's own update key only. When a CA certificate is bought,  │
+      # │ replace the two placeholder steps with the CA's signing action/CLI, e.g.:                                │
+      # │   - Certum SimplySign / an OV certificate in a cloud HSM (SSL.com eSigner, DigiCert KeyLocker): vendor CLI │
+      # │   - Azure Artifact Signing: azure/trusted-signing-action (OIDC login, no stored password)                 │
       # │ Sign every file in artifacts/release/to-sign.txt with SHA-256 and an RFC 3161 timestamp:                  │
       # │   signtool sign /fd SHA256 /tr <timestamp URL> /td SHA256 <…key options…> @files                          │
-      # │ and then the MSI in the "Sign the MSI" step below the same way.                                          │
+      # │ then the MSI the same way, and set AUTHENTICODE = true (Settings → Environments → release → Variables).  │
       # └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-      - name: Sign the payload (PLACEHOLDER, see above)
+      - name: Code-sign the payload (PLACEHOLDER until a CA is chosen)
+        if: env.AUTHENTICODE == 'true'
         shell: pwsh
         run: |
-          throw "Code signing isn't set up yet (LEO.md §24.3). No release was created. Use a dry run (Run workflow) to build an unsigned test MSI."
+          throw "AUTHENTICODE is true but no CA signing step is set up yet (LEO.md §24.3). Replace this step."
 
-      - name: Build the MSI from the signed payload
+      - name: Build the MSI from the payload
         shell: pwsh
         run: ./tools/build-release.ps1 -Version ${{ needs.check.outputs.version }} -MsiOnly
 
-      - name: Sign the MSI (PLACEHOLDER, same signing as above)
+      - name: Code-sign the MSI (PLACEHOLDER until a CA is chosen)
+        if: env.AUTHENTICODE == 'true'
         shell: pwsh
         run: |
-          throw "Code signing isn't set up yet (LEO.md §24.3)."
+          throw "AUTHENTICODE is true but no CA signing step is set up yet (LEO.md §24.3). Replace this step."
 
-      - name: Verify every signature
+      - name: LEO update signature (LEO.md §26)
+        shell: pwsh
+        env:
+          LEO_UPDATE_KEY: ${{ secrets.LEO_UPDATE_KEY }}
+        run: |
+          $msi = (Get-Item artifacts/release/LEO-*-x64.msi).FullName
+          dotnet run tools/update-key.cs -- sign $msi
+          if ($LASTEXITCODE -ne 0) { throw "Couldn't write LEO's update signature (secret LEO_UPDATE_KEY, LEO.md §26)." }
+
+      - name: Verify every code signature
+        if: env.AUTHENTICODE == 'true'
         shell: pwsh
         run: |
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
@@ -209,6 +229,7 @@ jobs:
           name: signed-msi
           path: |
             artifacts/release/LEO-*-x64.msi
+            artifacts/release/LEO-*-x64.msi.sig
             artifacts/release/SHA256SUMS.txt
           if-no-files-found: error
 
@@ -235,7 +256,12 @@ jobs:
           $text = Get-Content CHANGELOG.md -Raw
           $m = [regex]::Match($text, "(?ms)^## \[?$([regex]::Escape($version))\]?[^\n]*\n(.*?)(?=^## |\z)")
           $notes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "See CHANGELOG.md." }
-          $notes += "`n`nLEO is in Preview until 1.0. The MSI is signed; new releases may show a SmartScreen notice until they build reputation.`nSource of the bundled engine (mihomo, GPL-3.0): the attached mihomo source archive."
+          if ('${{ vars.AUTHENTICODE }}' -eq 'true') {
+            $notes += "`n`nLEO is in Preview until 1.0. The MSI is code-signed; new releases may show a SmartScreen notice until they build reputation."
+          } else {
+            $notes += "`n`nLEO is in Preview until 1.0. This build isn't code-signed yet: Windows shows *Unknown publisher* (choose *More info → Run anyway*), and Smart App Control blocks it where it's on (see the README). Updates are verified with LEO's own update key (the .sig file)."
+          }
+          $notes += "`nSource of the bundled engine (mihomo, GPL-3.0): the attached mihomo source archive."
           Set-Content notes.md $notes
       - name: Create the draft release (the user publishes it)
         env:
@@ -246,5 +272,5 @@ jobs:
           sha256sum "$src" | sed "s#  .*/#  #" >> out/SHA256SUMS.txt
           flags="--draft"
           if [ "${{ needs.check.outputs.prerelease }}" = "true" ]; then flags="$flags --prerelease"; fi
-          gh release create "$TAG" out/LEO-*-x64.msi out/SHA256SUMS.txt "$src" \
+          gh release create "$TAG" out/LEO-*-x64.msi out/LEO-*-x64.msi.sig out/SHA256SUMS.txt "$src" \
             $flags --title "${{ needs.check.outputs.title }}" --notes-file notes.md --verify-tag

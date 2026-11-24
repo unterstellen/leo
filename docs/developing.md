@@ -104,16 +104,30 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # start the 
 .\tools\build-release.ps1       # artifacts\release\LEO-<version>-x64.msi + payload-signatures.txt
 ```
 
+In Rider: pick **Build MSI** in the run configurations list (next to *Deploy service*) and press Run. It runs the same script; the MSI lands in `artifacts\release\`.
+
 It publishes the app and the service self-contained (.NET included, ReadyToRun only for LEO's own files, English only) into one install folder, stops if the two publish the same file with different content, lists every exe/dll with its signature status, and builds the MSI with WiX v5 (from NuGet). It never signs. Smart App Control blocks unsigned builds, so test the MSI on a PC or VM where it's off, **not** on top of your dev setup: the MSI removes a dev-deployed service (`tools\dev-service.ps1 deploy`), and `dev-service.ps1` refuses to deploy over an MSI install.
 
 What an installed LEO does differently from a dev build:
 
 - **Start at login:** the MSI writes one machine-wide `HKLM\...\Run\LEO` entry; each user's Settings switch is stored in `ui.json`. The installed app removes an old HKCU entry (the dev one) the first time it runs.
-- **Signed builds only** (release workflow): pipe clients other than LEO's own signed `LEO.exe` from the install folder get read-only access, the engine starts only if it's signed by LEO, and the updater is on. Dev builds are unsigned, so all three checks are off. On a signed install an admin can set `HKLM\SOFTWARE\UNTERSTELLEN\LEO\AllowUnsignedClients = 1` (DWORD) for the opt-in live tests.
+- **Official builds** (release workflow, signed or not): the updater is on and checks LEO's update signature (`LEO.md` §26).
+- **Code-signed builds only** (once a CA certificate exists): pipe clients other than LEO's own signed `LEO.exe` from the install folder get read-only access, the engine starts only if it's signed by LEO, and updates must also carry the code signature. Dev builds and unsigned Preview releases have no certificate, so these checks are off. On a signed install an admin can set `HKLM\SOFTWARE\UNTERSTELLEN\LEO\AllowUnsignedClients = 1` (DWORD) for the opt-in live tests.
 - The app checks that the pipe's server is LEO's service in session 0 from the install folder; a dev app only logs a mismatch.
 
 **Uninstall cleanup** is `LEO.Service.exe cleanup` (run by the MSI as SYSTEM, full uninstall only). Don't run it on your dev PC: it deletes all of LEO's settings for every user.
 
-**Releases** (`.github/workflows/release.yml`): you push a tag `vX.Y.Z` (or `vX.Y.Z-canary.N`). GitHub checks the tag (`tools/check-tag.ps1`), builds mihomo from source (`tools/build-engine.ps1`), runs the tests with it, publishes, then waits in the environment `release` for your approval before signing, and creates a **draft** release that you publish by hand. Signing is still a placeholder until the certificate authority is chosen (`LEO.md` §24.3): a tag push stops at that step and creates nothing. *Actions → Release → Run workflow* is a dry run that builds an unsigned MSI artifact.
+**Releases** (`.github/workflows/release.yml`): you push a tag `vX.Y.Z` (or `vX.Y.Z-canary.N`). GitHub checks the tag (`tools/check-tag.ps1`), builds mihomo from source (`tools/build-engine.ps1`), runs the tests with it, publishes an **official** build (`build-release.ps1 -Official`), then waits in the environment `release` for your approval, builds the MSI, writes LEO's update signature `LEO-x.y.z-x64.msi.sig`, and creates a **draft** release that you publish by hand. *Actions → Release → Run workflow* is a dry run that builds an unsigned MSI artifact (the workflow must be on `main` for that button to appear).
+
+**LEO's update key** (`LEO.md` §26). Until LEO has a code-signing certificate, releases are "unsigned Preview" and the updater trusts only LEO's own ECDSA P-256 key:
+
+```powershell
+dotnet run tools/update-key.cs -- new        # once: prints the public and the private key, writes nothing
+dotnet run tools/update-key.cs -- verify artifacts\release\LEO-0.1.0-x64.msi   # checks a downloaded MSI against its .sig
+```
+
+The public key goes into `src/LEO.Core/Updates/UpdateKeys.cs` (committed). The private key goes into your password manager and the GitHub secret `LEO_UPDATE_KEY` in the environment `release`, nowhere else. Lose it and installed LEOs can only be updated by reinstalling by hand. To rotate: add the new public key, ship one release signed with the old key, then switch the secret. Only builds made with `-Official` (the release workflow) update themselves; local and Rider builds never do.
+
+**Code signing later:** when a CA certificate is bought, replace the two `PLACEHOLDER` steps in `release.yml` with the CA's signing step and set the variable `AUTHENTICODE = true` on the `release` environment. Releases are then code-signed as well, and the update signature stays.
 
 Version numbers: `0.MINOR.PATCH` while LEO is in Preview; every tag's x.y.z must be higher than every earlier one (Windows Installer compares only those three numbers). Release notes come from `CHANGELOG.md`.

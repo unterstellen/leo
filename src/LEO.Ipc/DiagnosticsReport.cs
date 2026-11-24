@@ -36,7 +36,7 @@ public static partial class DiagnosticsReport
     {
         var sb = new StringBuilder();
         sb.AppendLine("LEO diagnostics");
-        sb.AppendLine($"LEO app {i.AppVersion}, service {i.ServiceVersion ?? "not connected"}, {(i.Signed ? "signed by " + i.Signer : "development build")}");
+        sb.AppendLine($"LEO app {i.AppVersion}, service {i.ServiceVersion ?? "not connected"}, {(i.Signed ? "signed by " + i.Signer : Leo.Core.LeoInfo.IsOfficialBuild ? "official build, not code-signed" : "development build")}");
         sb.AppendLine($"Windows {i.WindowsVersion}");
         sb.AppendLine(i.IncludePersonal ? "Names and addresses: included" : "Names and addresses: left out");
         sb.AppendLine();
