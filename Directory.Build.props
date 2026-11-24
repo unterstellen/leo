@@ -6,7 +6,7 @@
     <Copyright>© 2026 INFERSTELLEN (inferstellen.com). Published by UNTERSTELLEN (unterstellen.org).</Copyright>
     <Version>0.1.0</Version>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/unterstellen/leo-windows</RepositoryUrl>
+    <RepositoryUrl>https://github.com/unterstellen/leo</RepositoryUrl>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

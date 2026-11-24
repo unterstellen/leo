@@ -6,8 +6,8 @@
 | **Publisher (brand)** | UNTERSTELLEN — unterstellen.org |
 | **Company** | INFERSTELLEN — inferstellen.com |
 | **Code signing** | **Not decided yet** (choose at M8; SignPath ruled out 2026-11-22). Options in §16.1 |
-| **Repository** | https://github.com/unterstellen/leo-windows (public) |
-| **Releases / updates** | https://github.com/unterstellen/leo-windows/releases |
+| **Repository** | https://github.com/unterstellen/leo (public) |
+| **Releases / updates** | https://github.com/unterstellen/leo/releases |
 | **Platform** | Windows 11, x64 only |
 | **Language** | English only (permanently) |
 | **Price** | **Free forever and open source.** No accounts, no telemetry, no hosted services |
@@ -258,7 +258,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 - Stats DB: `%ProgramData%\UNTERSTELLEN\LEO\stats.db` (SQLite through Windows' own `winsqlite3.dll`). Daily byte totals only; never connections or destinations (§19).
 - Logs: `%ProgramData%\UNTERSTELLEN\LEO\logs\` (rolling, 7 days).
 - UI preferences: `%LocalAppData%\UNTERSTELLEN\LEO\`.
-- **No telemetry. No accounts.** LEO's only network calls of its own are the update check to `api.github.com` (unterstellen/leo-windows releases) and the internet health probes (§5.7).
+- **No telemetry. No accounts.** LEO's only network calls of its own are the update check to `api.github.com` (unterstellen/leo releases) and the internet health probes (§5.7).
 
 ---
 
@@ -266,8 +266,8 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 - **MSI** built with the WiX Toolset. MSIX isn't used because it can't install the Wintun driver adapter or a LocalSystem service cleanly.
 - Installer: installs the service, Wintun, the UI and Start menu shortcuts, with the option "Start LEO at login".
 - Everything Authenticode-signed (with timestamp) using the certificate chosen at M8 (§16.1), in the GitHub Actions release workflow. Local dev builds stay unsigned (Smart App Control off on the dev PC).
-- **Hosting: GitHub Releases** at https://github.com/unterstellen/leo-windows/releases (public repo). Each release has the signed `LEO-<version>-x64.msi` attached. Tags look like `v0.2.0`.
-- **Auto-update**: the service calls `GET https://api.github.com/repos/unterstellen/leo-windows/releases/latest` (anonymous; GitHub allows 60 requests/hour per IP, so it checks at most every 6 h), compares the tag (`v0.2.0`) with its own version, downloads the MSI asset, **verifies the MSI has a valid Authenticode signature from the same certificate as the installed LEO**, then installs silently and restarts. The user can defer it. The Canary channel reads pre-releases instead of `latest`.
+- **Hosting: GitHub Releases** at https://github.com/unterstellen/leo/releases (public repo). Each release has the signed `LEO-<version>-x64.msi` attached. Tags look like `v0.2.0`.
+- **Auto-update**: the service calls `GET https://api.github.com/repos/unterstellen/leo/releases/latest` (anonymous; GitHub allows 60 requests/hour per IP, so it checks at most every 6 h), compares the tag (`v0.2.0`) with its own version, downloads the MSI asset, **verifies the MSI has a valid Authenticode signature from the same certificate as the installed LEO**, then installs silently and restarts. The user can defer it. The Canary channel reads pre-releases instead of `latest`.
 - Channels: `canary` (git branch `canary`) → `main` (stable).
 
 ---
@@ -284,7 +284,7 @@ LEO lets one PC stay connected to **several networks at once**: multiple Wi-Fi a
 ## 11. Solution Layout (proposed)
 
 ```
-leo-windows/
+leo/
 ├─ LEO.md
 ├─ src/
 │  ├─ LEO.App/            # WinUI 3 desktop + tray (H.NotifyIcon), MVVM (CommunityToolkit.Mvvm)
@@ -386,7 +386,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 ## 13. Resolved Questions (2026-11-20)
 1. **Signing**: not decided (SignPath ruled out 2026-11-22; options in §16.1). Whatever certificate is used, the pipe-client check (§4.2) and the update check (§9) compare against the release certificate rather than a fixed name.
 2. **Branding**: follow Windows 11, with no custom colors. Logo (replaced 2026-11-24 with the user's design) = a gold-to-orange circle (radial gradient) with a dark curved band across its upper left. Source `assets/leo.svg`; `tools/make-icon.ps1` reads that file directly (circle, band path and both gradients) and renders `src/LEO.App/Assets/leo.ico` (16–256 px) plus `leo-32/64/256.png`, so a changed SVG only needs the script re-run. The same image at every size (the shape stays legible at 16 px). One icon works on both light and dark taskbars.
-3. **Update hosting**: GitHub Releases on the public repo https://github.com/unterstellen/leo-windows.
+3. **Update hosting**: GitHub Releases on the public repo https://github.com/unterstellen/leo.
 4. **Health probe**: Microsoft NCSI + Cloudflare fallback, configurable (§5.7).
 5. **Localization**: English only, permanently.
 
@@ -904,7 +904,7 @@ Design written before the build (no code yet). Covers §12's M8 row and the open
 - **Pipe:** `\\.\pipe\LEO.Control` ACL = Network deny, SYSTEM + Administrators full, Interactive read/write (+ the hosting account in console runs). `ControlPipeServer.ServeAsync` identifies the client from its process token and logs pid/user/image, and carries `// TODO(M8): reject clients whose image is not Authenticode-signed` (deferred in M0, §4.2). The UI doesn't check who owns the pipe server.
 - **Start at login:** `HKCU\…\Run\LEO` = `"C:\UNTERSTELLEN\Projects\leo-windows\src\LEO.App\bin\Debug\…\LEO.exe" --tray`, written by `StartupManager` in the app (§7).
 - **Runtime state an uninstall must cover:** the engine adapter **"LEO" (Meta Tunnel) is Up** right now (the engine creates and removes it; mihomo embeds Wintun, §17); no rules in "LEO (VPN only)" at the moment; config at schema 2 plus `config.json.v1.bak`; daily logs since 2026-11-20.
-- **Updater:** not built. `LeoInfo.LatestReleaseApi` still points at `https://api.github.com/repos/unterstellen/leo-windows/releases/latest`, which §17 found rate-limited for anonymous callers on this network.
+- **Updater:** not built. `LeoInfo.LatestReleaseApi` still points at `https://api.github.com/repos/unterstellen/leo/releases/latest`, which §17 found rate-limited for anonymous callers on this network.
 
 ### 24.1 Self-contained builds
 
@@ -962,9 +962,9 @@ Windows (Smart App Control, SmartScreen, Defender) needs a signature from a publ
   5. **Sign** (environment `release`, waits for the user's approval): payload binaries, then build the MSI from the signed files, then sign the MSI; `signtool verify /pa /all` on everything; fail on any unsigned PE.
   6. Create a **draft** GitHub Release (pre-release when the tag has a suffix) with `LEO-<x.y.z>-x64.msi`, `SHA256SUMS.txt`, `mihomo-<ver>-source.tar.gz`, and release notes from `CHANGELOG.md`. **The user publishes the draft by hand.**
 - **Update check without the API** (the §17 finding: anonymous `api.github.com` was rate-limited here):
-  - **Stable:** `GET https://github.com/unterstellen/leo-windows/releases/latest` **without following the redirect**; the `Location` header ends in `/releases/tag/v<x.y.z>`. This is the web endpoint, not the REST API.
-  - **Canary (pre-releases):** `https://github.com/unterstellen/leo-windows/releases.atom`, the public Atom feed, which lists pre-releases too; the newest entry with a higher version wins.
-  - **Download:** `https://github.com/unterstellen/leo-windows/releases/download/v<tag>/LEO-<x.y.z>-x64.msi` (redirects to GitHub's file host). The file name is fixed by convention, so no API call is needed.
+  - **Stable:** `GET https://github.com/unterstellen/leo/releases/latest` **without following the redirect**; the `Location` header ends in `/releases/tag/v<x.y.z>`. This is the web endpoint, not the REST API.
+  - **Canary (pre-releases):** `https://github.com/unterstellen/leo/releases.atom`, the public Atom feed, which lists pre-releases too; the newest entry with a higher version wins.
+  - **Download:** `https://github.com/unterstellen/leo/releases/download/v<tag>/LEO-<x.y.z>-x64.msi` (redirects to GitHub's file host). The file name is fixed by convention, so no API call is needed.
   - `LeoInfo.LatestReleaseApi` is replaced by these URLs; §8's "only network calls" line changes to "github.com (update check), plus the internet checks". User-Agent `LEO/<version>` with nothing that identifies the PC.
 - **When:** once at service start (delayed a few minutes) and then **once a day** with a random offset, plus "Check now" in Settings. Updates can be switched off ("Check for updates automatically"). The engine/TUN treats the service's own traffic like any unruled traffic (Primary, or a VPN that takes the default route), which is fine for an update.
 - **Who installs:** the **service** (SYSTEM) downloads, verifies and runs the MSI; the UI only shows and asks. This is what lets a standard user's UI show "Update available" without an admin prompt, while **only admins (Full access) can start an install** (same access rule as every change, §12a M1); standard users see "Ask an administrator to update LEO".

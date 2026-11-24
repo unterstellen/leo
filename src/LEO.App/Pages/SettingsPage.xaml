@@ -120,7 +120,7 @@
                     <StackPanel Orientation="Horizontal" Spacing="12">
                         <HyperlinkButton Content="unterstellen.org" NavigateUri="https://unterstellen.org" Padding="0" />
                         <HyperlinkButton Content="inferstellen.com" NavigateUri="https://inferstellen.com" Padding="0" />
-                        <HyperlinkButton Content="Source &amp; releases on GitHub" NavigateUri="https://github.com/unterstellen/leo-windows" Padding="0" />
+                        <HyperlinkButton Content="Source &amp; releases on GitHub" NavigateUri="https://github.com/unterstellen/leo" Padding="0" />
                         <HyperlinkButton Content="License (GPL-3.0)" NavigateUri="https://www.gnu.org/licenses/gpl-3.0.html" Padding="0" />
                     </StackPanel>
                 </StackPanel>

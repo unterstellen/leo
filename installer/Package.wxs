@@ -31,9 +31,9 @@
     <Property Id="ARPPRODUCTICON" Value="LeoIcon" />
     <Property Id="ARPNOMODIFY" Value="1" />
     <Property Id="ARPNOREPAIR" Value="1" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/unterstellen/leo-windows" />
-    <Property Id="ARPHELPLINK" Value="https://github.com/unterstellen/leo-windows/issues" />
-    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/unterstellen/leo-windows/releases" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/unterstellen/leo" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/unterstellen/leo/issues" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/unterstellen/leo/releases" />
 
     <!--
       "Start LEO at login" (checkbox, on by default; silent installs: START_AT_LOGIN=0|1). Remembered across upgrades:

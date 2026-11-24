@@ -16,9 +16,9 @@ public static class LeoInfo
     public const string LicenseUrl = "https://www.gnu.org/licenses/gpl-3.0.html";
 
     /// <summary>Public source repository; releases here are LEO's update channel (LEO.md §9).</summary>
-    public const string RepositoryUrl = "https://github.com/unterstellen/leo-windows";
+    public const string RepositoryUrl = "https://github.com/unterstellen/leo";
     public const string ReleasesUrl = RepositoryUrl + "/releases";
-    public const string LatestReleaseApi = "https://api.github.com/repos/unterstellen/leo-windows/releases/latest";
+    public const string LatestReleaseApi = "https://api.github.com/repos/unterstellen/leo/releases/latest";
 
     /// <summary>Windows service name (sc.exe / services.msc).</summary>
     public const string ServiceName = "LEO";
