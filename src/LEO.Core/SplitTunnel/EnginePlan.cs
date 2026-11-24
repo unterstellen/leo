@@ -31,6 +31,28 @@ public sealed record EngineDns(
 /// <summary>A program discovered as a child of a ruled app (only for rules with IncludeChildren).</summary>
 public sealed record ChildProgram(string ExePath, string ParentRuleId);
 
+/// <summary>
+/// How the engine checks bond members itself (LEO.md §22.3): always LEO's own probe target, never the engine's default
+/// (which would be a Google address).
+/// </summary>
+public sealed record BondHealthCheck(string Url, string ExpectedStatus)
+{
+    public static BondHealthCheck Default { get; } = new("http://cp.cloudflare.com/generate_204", "204");
+
+    /// <summary>The first configured probe target that expects an HTTP status (e.g. "204"), else <see cref="Default"/>.</summary>
+    public static BondHealthCheck From(IEnumerable<(string Url, string Expect)> probeTargets)
+    {
+        foreach (var (url, expect) in probeTargets)
+            if (Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme is "http" or "https"
+                && int.TryParse(expect, NumberStyles.None, CultureInfo.InvariantCulture, out var code) && code is >= 200 and < 400)
+                return new BondHealthCheck(url, code.ToString(CultureInfo.InvariantCulture));
+        return Default;
+    }
+}
+
+/// <summary>A bond as written into the engine config: one load-balance / url-test group.</summary>
+public sealed record PlannedBond(string BondId, string Name, BondMode Mode, IReadOnlyList<string> Members);
+
 /// <summary>Live choice for one engine select-group (switched through the engine API, no reload).</summary>
 public sealed record GroupSelection(string Group, string Choice);
 
@@ -78,10 +100,25 @@ public sealed class EnginePlan
 
     public const string UnruledGroup = "LEO-UNRULED";
 
+    /// <summary>Bond groups (M7) written into the engine config: only bonds that a rule or "Everything else uses" refers to.</summary>
+    public IReadOnlyList<PlannedBond> Bonds { get; init; } = [];
+
+    /// <summary>The bond unruled traffic uses right now (M7), or null (a VPN or the Primary).</summary>
+    public string? UnruledBondId { get; init; }
+
+    /// <summary>Engine health check for bond groups.</summary>
+    public BondHealthCheck BondCheck { get; init; } = BondHealthCheck.Default;
+
     public static string OutboundName(string adapterId, bool vpn = false) => (vpn ? "vpn-" : "net-") + Short(adapterId);
     public static string OutboundName(EngineAdapter a) => OutboundName(a.Id, a.IsVpn);
-    public static string GroupName(string adapterId, OnTargetDown mode) =>
-        "to-" + Short(adapterId) + (mode == OnTargetDown.Block ? "-block" : "-fb");
+
+    /// <summary>A rule target's select group: "to-&lt;adapter&gt;-fb|-block", for bonds "to-b&lt;bond&gt;-fb|-block".</summary>
+    public static string GroupName(string targetId, OnTargetDown mode) =>
+        (BondTargets.IsBond(targetId) ? "to-b" + Short(BondTargets.BondId(targetId)) : "to-" + Short(targetId))
+        + (mode == OnTargetDown.Block ? "-block" : "-fb");
+
+    /// <summary>A bond's engine group (load-balance / url-test).</summary>
+    public static string BondGroupName(string bondId) => "bond-" + Short(bondId);
 
     private static string Short(string adapterId) =>
         new string(adapterId.Where(char.IsAsciiLetterOrDigit).Take(8).ToArray()).ToLowerInvariant();
@@ -100,7 +137,8 @@ public sealed class EnginePlan
     public static EnginePlan Build(IReadOnlyList<EngineAdapter> adapters, string? primaryId,
         IReadOnlyList<AppRule> rules, IReadOnlyList<ChildProgram> children,
         IReadOnlyList<DestinationRule>? destinations = null, IReadOnlyList<NetworkDnsSetting>? networkDns = null,
-        IReadOnlyList<NrptNamespace>? nrpt = null)
+        IReadOnlyList<NrptNamespace>? nrpt = null, IReadOnlyList<Bond>? bonds = null, string? unruledBondId = null,
+        BondHealthCheck? bondCheck = null)
     {
         var dests = DestinationMatcher.Ordered(destinations ?? [], rules);
         var up = adapters.Where(a => (a.IsCandidate || a.IsVpn) && a.IsUp).OrderBy(a => a.Id, StringComparer.OrdinalIgnoreCase).ToList();
@@ -120,10 +158,44 @@ public sealed class EnginePlan
             ? OutboundName(primaryId) : primaryMembers[0];
         selections.Add(new GroupSelection(PrimaryGroup, primaryOut));
 
-        // Unruled traffic (M6): follows a VPN that takes the default route, else the Primary. Switched live.
+        // Bonds (M7, LEO.md §22): only bonds a rule or "Everything else uses" refers to get an engine group. Members are the
+        // connected member networks (outbounds exist only for those); the engine's own health check skips dead ones, and
+        // LEO's "to-b…" groups switch away live when LEO's health says no member is usable.
+        var bondById = (bonds ?? []).GroupBy(b => b.Id, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var referenced = active.Select(r => r.TargetAdapterId).Concat(dests.Select(d => d.TargetAdapterId))
+            .Where(BondTargets.IsBond).Select(BondTargets.BondId)
+            .Concat(unruledBondId is null ? [] : [unruledBondId])
+            .Where(bondById.ContainsKey).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        var planned = new List<PlannedBond>();
+        foreach (var id in referenced)
+        {
+            var b = bondById[id];
+            var members = new List<string>();
+            foreach (var m in b.Members)
+            {
+                if (!upById.TryGetValue(m.AdapterId, out var a) || a.IsVpn || !a.IsCandidate) continue;
+                // Weights: Weighted (by site) and Every connection (round-robin over the repeated list). Found live: an
+                // even split over a fast and a slow link waits on the slow one (LEO.md §23).
+                var copies = b.Mode is BondMode.Weighted or BondMode.EveryConnection ? Math.Clamp(m.Weight, 1, BondRules.MaxWeight) : 1;
+                for (var i = 0; i < copies; i++) members.Add(OutboundName(a));
+            }
+            if (members.Count > 0) planned.Add(new PlannedBond(b.Id, b.Name, b.Mode, members));
+        }
+        var plannedIds = planned.Select(p => p.BondId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool BondUsable(string bondId) => plannedIds.Contains(bondId) && bondById[bondId].Members
+            .Any(m => upById.TryGetValue(m.AdapterId, out var a) && !a.IsVpn && a.IsCandidate && IsUsable(a));
+
+        // Unruled traffic (M6): follows a VPN that takes the default route, else the chosen bond (M7), else the Primary.
+        // Switched live.
         var unruledVpn = UnruledVpn(vpnUp);
-        groups.Add((UnruledGroup, vpnUp.Select(OutboundName).Append(PrimaryGroup).ToList()));
-        selections.Add(new GroupSelection(UnruledGroup, unruledVpn is null ? PrimaryGroup : OutboundName(unruledVpn)));
+        var unruledBond = unruledBondId is not null && plannedIds.Contains(unruledBondId) ? bondById[unruledBondId] : null;
+        var unruledMembers = vpnUp.Select(OutboundName).ToList();
+        if (unruledBond is not null) unruledMembers.Add(BondGroupName(unruledBond.Id));
+        unruledMembers.Add(PrimaryGroup);
+        groups.Add((UnruledGroup, unruledMembers));
+        var unruledBondNow = unruledVpn is null && unruledBond is not null && BondUsable(unruledBond.Id) ? unruledBond : null;
+        selections.Add(new GroupSelection(UnruledGroup, unruledVpn is not null ? OutboundName(unruledVpn)
+            : unruledBondNow is not null ? BondGroupName(unruledBondNow.Id) : PrimaryGroup));
 
         // One select group per (target, fallback mode), switched live as health changes.
         foreach (var (target, mode) in active.Select(r => (r.TargetAdapterId, r.OnTargetDown))
@@ -133,6 +205,15 @@ public sealed class EnginePlan
             var name = GroupName(target, mode);
             var alternative = mode == OnTargetDown.Block ? Reject : PrimaryGroup;
             var members = new List<string>();
+            if (BondTargets.IsBond(target))
+            {
+                var bondId = BondTargets.BondId(target);
+                if (plannedIds.Contains(bondId)) members.Add(BondGroupName(bondId));
+                members.Add(alternative);
+                groups.Add((name, members));
+                selections.Add(new GroupSelection(name, BondUsable(bondId) ? BondGroupName(bondId) : alternative));
+                continue;
+            }
             var targetUp = upById.TryGetValue(target, out var t);
             if (targetUp) members.Add(OutboundName(t!));
             members.Add(alternative);
@@ -180,12 +261,24 @@ public sealed class EnginePlan
 
         var dnsPrimary = primaryId is not null && physicalUp.Any(a => a.Id.Equals(primaryId, StringComparison.OrdinalIgnoreCase))
             ? primaryId : physicalUp.FirstOrDefault()?.Id;
-        var dns = BuildDns(up, dnsPrimary, dests, networkDns ?? [], unruledVpn, nrpt ?? []);
+        // DNS for bond-targeted domains goes through one member (LEO.md §22.5): the Primary if it's a usable member, else
+        // the first usable member in the bond's order.
+        string? DnsTarget(string target)
+        {
+            if (!BondTargets.IsBond(target)) return target;
+            if (!bondById.TryGetValue(BondTargets.BondId(target), out var b)) return null;
+            var usable = b.Members.Select(m => upById.GetValueOrDefault(m.AdapterId))
+                .Where(a => a is { IsVpn: false, IsCandidate: true } && IsUsable(a)).Select(a => a!).ToList();
+            return usable.FirstOrDefault(a => a.Id.Equals(dnsPrimary, StringComparison.OrdinalIgnoreCase))?.Id ?? usable.FirstOrDefault()?.Id;
+        }
+        var dns = BuildDns(up, dnsPrimary, dests, networkDns ?? [], unruledVpn, nrpt ?? [], DnsTarget);
 
         // Reload when anything in config.yaml changes (outbounds, groups, guard/destination rules, DNS); app rule lists
         // and selections are updated live.
         var key = string.Join("|", outbounds.Select(o => $"{o.Item1}={o.Alias}")) + "#" +
                   string.Join("|", groups.Select(g => $"{g.Item1}:{string.Join(",", g.Item2)}")) + "#" +
+                  string.Join("|", planned.Select(p => $"{p.BondId}:{p.Mode}:{string.Join(",", p.Members)}")) + "#" +
+                  (bondCheck ?? BondHealthCheck.Default) + "#" +
                   string.Join("|", providers.Select(p => p.Item1)) + "#" +
                   string.Join("|", guards) + "#" +
                   string.Join("|", destLines) + "#" + sniff + "#" + DnsKey(dns);
@@ -201,6 +294,9 @@ public sealed class EnginePlan
             Dns = dns,
             Sniff = sniff,
             UnruledVpnId = unruledVpn?.Id,
+            Bonds = planned,
+            UnruledBondId = unruledBondNow?.Id,
+            BondCheck = bondCheck ?? BondHealthCheck.Default,
             StructureKey = key,
         };
     }
@@ -225,7 +321,7 @@ public sealed class EnginePlan
 
     private static EngineDns? BuildDns(IReadOnlyList<EngineAdapter> up, string? primaryId,
         IReadOnlyList<DestinationRule> dests, IReadOnlyList<NetworkDnsSetting> custom,
-        EngineAdapter? unruledVpn, IReadOnlyList<NrptNamespace> nrpt)
+        EngineAdapter? unruledVpn, IReadOnlyList<NrptNamespace> nrpt, Func<string, string?>? dnsTarget = null)
     {
         if (primaryId is null) return null;
         var byId = up.ToDictionary(a => a.Id, StringComparer.OrdinalIgnoreCase);
@@ -252,7 +348,8 @@ public sealed class EnginePlan
         var policy = new List<(string, IReadOnlyList<string>)>();
         foreach (var d in dests.Where(d => d.Kind is DestinationKind.DomainSuffix or DestinationKind.DomainExact && d.AppRuleId is null))
         {
-            if (!byId.TryGetValue(d.TargetAdapterId, out var target) || target.Id.Equals(defaultAdapter.Id, StringComparison.OrdinalIgnoreCase)) continue;
+            var targetId = dnsTarget is null ? d.TargetAdapterId : dnsTarget(d.TargetAdapterId);
+            if (targetId is null || !byId.TryGetValue(targetId, out var target) || target.Id.Equals(defaultAdapter.Id, StringComparison.OrdinalIgnoreCase)) continue;
             var servers = target.IsVpn ? VpnDns(target) : EffectiveDns(target, custom);
             if (servers.Count == 0) continue; // a VPN without DNS of its own: the default servers answer
             var pattern = d.Kind == DestinationKind.DomainSuffix ? "+." + d.Value : d.Value;
@@ -340,6 +437,31 @@ public sealed class EnginePlan
         }
 
         sb.AppendLine("proxy-groups:");
+        foreach (var b in Bonds)
+        {
+            // LEO.md §22.2–22.3: always LEO's own health-check URL (the engine's default would be a Google address).
+            sb.AppendLine($"  - name: {Q(BondGroupName(b.BondId))}");
+            if (b.Mode == BondMode.Fastest)
+            {
+                sb.AppendLine("    type: url-test");
+                sb.AppendLine("    tolerance: 50");
+            }
+            else
+            {
+                sb.AppendLine("    type: load-balance");
+                sb.AppendLine($"    strategy: {(b.Mode == BondMode.EveryConnection ? "round-robin" : "consistent-hashing")}");
+            }
+            sb.AppendLine($"    url: {Q(BondCheck.Url)}");
+            sb.AppendLine($"    expected-status: {Q(BondCheck.ExpectedStatus)}");
+            sb.AppendLine("    interval: 10");
+            // 5 s, not 3: a phone tether busy with a download answered checks in up to ~2 s on the dev PC, and one
+            // timed-out check makes the engine skip that member until the next check (LEO.md §23).
+            sb.AppendLine("    timeout: 5000");
+            sb.AppendLine("    lazy: true");
+            sb.AppendLine("    max-failed-times: 2");
+            sb.AppendLine("    proxies:");
+            foreach (var m in b.Members) sb.AppendLine($"      - {Q(m)}");
+        }
         foreach (var (name, members) in Groups)
         {
             sb.AppendLine($"  - name: {Q(name)}");

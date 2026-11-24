@@ -66,6 +66,12 @@ public sealed class SplitTunnelSettings
     /// Per-VPN options (M6), machine-wide like dual link: not part of a profile (profiles capture rules and DNS only).
     /// </summary>
     public List<VpnSettings> Vpns { get; set; } = [];
+
+    /// <summary>Bond groups (M7, LEO.md §22), machine-wide: not part of a profile (user's decision, §22.8 Q2).</summary>
+    public List<Bond> Bonds { get; set; } = [];
+
+    /// <summary>"Everything else uses" a bond (M7): unruled traffic goes through this bond instead of the Primary. null = Primary.</summary>
+    public string? UnruledBondId { get; set; }
 }
 
 /// <summary>Options for one VPN, matched by its key (LEO.md §20.3).</summary>

@@ -30,7 +30,19 @@ public sealed partial class DestinationsViewModel : ObservableObject
     public ObservableCollection<DestinationCardViewModel> Rules { get; } = [];
     public ObservableCollection<NetworkDnsCardViewModel> Dns { get; } = [];
 
-    [ObservableProperty] public partial bool CanEdit { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterButtonEnabled))]
+    public partial bool CanEdit { get; set; }
+
+    /// <summary>
+    /// True while an on/off request is being applied (the engine starts or stops). The button is greyed out and
+    /// says "Turning on…/off…", so a quick second click can't send the same request again unnoticed.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterButtonEnabled))]
+    public partial bool MasterBusy { get; set; }
+
+    public bool MasterButtonEnabled => CanEdit && !MasterBusy;
     [ObservableProperty] public partial bool IsConnected { get; set; }
     [ObservableProperty] public partial string MasterButtonText { get; set; } = "Turn off";
     [ObservableProperty] public partial string StatusTitle { get; set; } = "";
@@ -45,7 +57,7 @@ public sealed partial class DestinationsViewModel : ObservableObject
     [ObservableProperty] public partial string TestNetworkText { get; set; } = "";
     [ObservableProperty] public partial string TestWhyText { get; set; } = "";
 
-    public IReadOnlyList<NetworkOption> Networks => NetworkOption.From(_connection.Networks);
+    public IReadOnlyList<NetworkOption> Networks => NetworkOption.From(_connection.Networks, _connection.SplitTunnel.Bonds);
 
     [ObservableProperty] public partial string? VpnBanner { get; set; }
 
@@ -54,24 +66,30 @@ public sealed partial class DestinationsViewModel : ObservableObject
         [new AppOption(null, "Any app", null),
          .. _connection.SplitTunnel.Rules.Select(r => new AppOption(r.Id, r.DisplayName, r.Kind == AppMatchKind.ExactPath ? r.Pattern : null))];
 
-    public string NetworkName(string adapterId) =>
-        _connection.Networks.Adapters.FirstOrDefault(a => a.Id == adapterId)?.DisplayName ?? "Network not connected";
+    public string NetworkName(string adapterId) => NetworkOption.NameOf(adapterId, _connection.Networks, _connection.SplitTunnel.Bonds);
 
     // ── Actions (from user events only) ─────────────────────────────────────
 
     public async Task ToggleMasterAsync()
     {
-        if (!CanEdit) return;
+        if (!CanEdit || MasterBusy) return;
         var enable = !_connection.SplitTunnel.Enabled;
         UiLog.Write($"Split tunneling: switch {(enable ? "on" : "off")} (URLs & IPs page)");
-        Show(await _connection.TryInvokeAsync(c => c.SetSplitTunnelEnabledAsync(enable)));
+        MasterBusy = true;
+        MasterButtonText = enable ? "Turning on…" : "Turning off…";
+        try { Show(await _connection.TryInvokeAsync(c => c.SetSplitTunnelEnabledAsync(enable))); }
+        finally
+        {
+            MasterBusy = false;
+            Refresh();
+        }
     }
 
     /// <summary>Default network for a new rule: the best connected network that isn't the Primary.</summary>
     public NetworkOption? DefaultTarget()
     {
         var nets = Networks;
-        var physical = nets.Where(n => !n.IsVpn).ToList();
+        var physical = nets.Where(n => !n.IsVpn && !n.IsBond).ToList();
         return physical.FirstOrDefault(n => n.IsUp && !n.IsPrimary) ?? physical.FirstOrDefault(n => n.IsPrimary) ?? nets.FirstOrDefault();
     }
 
@@ -149,7 +167,7 @@ public sealed partial class DestinationsViewModel : ObservableObject
         var info = _connection.SplitTunnel;
         IsConnected = _connection.State == ConnectionState.Connected;
         CanEdit = IsConnected && _connection.Access == ClientAccess.Full;
-        MasterButtonText = info.Enabled ? "Turn off" : "Turn on";
+        if (!MasterBusy) MasterButtonText = info.Enabled ? "Turn off" : "Turn on";
         var dests = info.Destinations ?? [];
 
         (StatusSeverity, StatusTitle, StatusText) = !IsConnected
@@ -157,7 +175,9 @@ public sealed partial class DestinationsViewModel : ObservableObject
             : info.State switch
             {
                 SplitTunnelEngineState.Running => (InfoBarSeverity.Success, "Split tunneling is on",
-                    info.UnruledVia is { } via ? $"Destinations below use their chosen network, even from apps that have their own rule. Everything else goes through {via} (that VPN takes all unruled traffic)." : "Destinations below use their chosen network, even from apps that have their own rule. Everything else uses your Primary network."),
+                    info.UnruledVia is { } via ? $"Destinations below use their chosen network, even from apps that have their own rule. Everything else goes through {via} (that VPN takes all unruled traffic)."
+                    : info.UnruledBondNow is { } bond ? $"Destinations below use their chosen network, even from apps that have their own rule. Everything else goes through bond '{bond}'."
+                    : "Destinations below use their chosen network, even from apps that have their own rule. Everything else uses your Primary network."),
                 SplitTunnelEngineState.Starting => (InfoBarSeverity.Informational, "Starting…", "LEO is starting its routing engine."),
                 SplitTunnelEngineState.Error => (InfoBarSeverity.Error, "Split tunneling paused", info.Message ?? "The routing engine stopped."),
                 SplitTunnelEngineState.NotInstalled => (InfoBarSeverity.Error, "Routing engine missing", info.Message ?? "Reinstall LEO."),

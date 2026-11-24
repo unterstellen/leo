@@ -86,7 +86,7 @@ public static partial class DestinationMatcher
 
         if (rule.Ports.Length > 0)
         {
-            if (!TryParsePorts(rule.Ports, out var ranges)) return "Ports look like 443, 80, 443 or 27000-27100 (1–65535).";
+            if (!TryParsePorts(rule.Ports, out var ranges)) return "Ports look like 443, 80, 443 or 27000-27100 (1 to 65535).";
             rule.Ports = string.Join(", ", ranges.Select(r => r.Lo == r.Hi ? r.Lo.ToString(CultureInfo.InvariantCulture) : $"{r.Lo}-{r.Hi}"));
         }
         if (!Enum.IsDefined(rule.Protocol)) return "Unknown protocol.";

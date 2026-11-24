@@ -28,7 +28,7 @@ public sealed partial class NetworksViewModel : ObservableObject
     [ObservableProperty] public partial bool IsReadOnlyNoticeVisible { get; set; }
     [ObservableProperty] public partial bool IsEmpty { get; set; } = true;
     [ObservableProperty] public partial string EmptyText { get; set; } = "Connecting to the LEO service…";
-    [ObservableProperty] public partial string PrimaryTitle { get; set; } = "—";
+    [ObservableProperty] public partial string PrimaryTitle { get; set; } = "";
     [ObservableProperty] public partial string PrimaryDetail { get; set; } = "";
     [ObservableProperty] public partial string PrimaryGlyph { get; set; } = "";
     [ObservableProperty] public partial string? ErrorText { get; set; }
@@ -194,7 +194,7 @@ public sealed partial class NetworksViewModel : ObservableObject
         }
         else
         {
-            PrimaryTitle = connected ? "No network connected" : "—";
+            PrimaryTitle = connected ? "No network connected" : "LEO service not connected";
             PrimaryDetail = "";
             PrimaryGlyph = "";
         }

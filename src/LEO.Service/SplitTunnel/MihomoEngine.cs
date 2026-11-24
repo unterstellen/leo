@@ -201,6 +201,45 @@ public sealed class MihomoEngine(ILogger<MihomoEngine> log) : IDisposable
         using var r = await api.DeleteAsync($"connections/{Uri.EscapeDataString(id)}", ct);
     }
 
+    /// <summary>
+    /// Asks the engine to health-check every member of a group now (M7: a bond member's state changed in LEO's own probes),
+    /// with LEO's probe URL. Best effort.
+    /// </summary>
+    public async Task CheckGroupAsync(string group, string url, CancellationToken ct)
+    {
+        var (api, _, _) = Api();
+        using var r = await api.GetAsync($"group/{Uri.EscapeDataString(group)}/delay?url={Uri.EscapeDataString(url)}&timeout=5000", ct);
+        if (!r.IsSuccessStatusCode) log.LogInformation("Engine check of {Group} answered {Status}", group, (int)r.StatusCode);
+    }
+
+    /// <summary>The engine's own alive flag per outbound (M7 bond cards), for the given health-check URL when it has one.</summary>
+    public async Task<IReadOnlyDictionary<string, bool>> GetAliveAsync(IEnumerable<string> outbounds, string url, CancellationToken ct)
+    {
+        var (api, _, _) = Api();
+        var result = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var name in outbounds.Distinct(StringComparer.Ordinal))
+        {
+            using var r = await api.GetAsync($"proxies/{Uri.EscapeDataString(name)}", ct);
+            if (!r.IsSuccessStatusCode) continue;
+            await using var stream = await r.Content.ReadAsStreamAsync(ct);
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            if (ParseAlive(doc.RootElement, url) is { } alive) result[name] = alive;
+        }
+        return result;
+    }
+
+    /// <summary>"extra"[url].alive when the engine tested this URL, else the general "alive".</summary>
+    internal static bool? ParseAlive(System.Text.Json.JsonElement proxy, string url)
+    {
+        if (proxy.TryGetProperty("extra", out var extra) && extra.ValueKind == System.Text.Json.JsonValueKind.Object
+            && extra.TryGetProperty(url, out var forUrl) && forUrl.TryGetProperty("alive", out var a1)
+            && a1.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+            return a1.GetBoolean();
+        if (proxy.TryGetProperty("alive", out var a2) && a2.ValueKind is System.Text.Json.JsonValueKind.True or System.Text.Json.JsonValueKind.False)
+            return a2.GetBoolean();
+        return null;
+    }
+
     /// <summary>Stops the engine and waits until its virtual adapter is gone.</summary>
     public async Task StopAsync(CancellationToken ct = default)
     {

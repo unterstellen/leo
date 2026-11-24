@@ -41,6 +41,7 @@ public partial class App : Application
     public NetworksViewModel Networks { get; private set; } = null!;
     public AppsViewModel Apps { get; private set; } = null!;
     public DestinationsViewModel Destinations { get; private set; } = null!;
+    public BondingViewModel Bonding { get; private set; } = null!;
     public ProfilesViewModel Profiles { get; private set; } = null!;
     public StatsViewModel Stats { get; private set; } = null!;
 
@@ -54,6 +55,7 @@ public partial class App : Application
         Networks = new NetworksViewModel(Connection, _dispatcher);
         Apps = new AppsViewModel(Connection, _dispatcher);
         Destinations = new DestinationsViewModel(Connection, _dispatcher);
+        Bonding = new BondingViewModel(Connection, _dispatcher);
         Profiles = new ProfilesViewModel(Connection, _dispatcher);
         Stats = new StatsViewModel(Connection, _dispatcher);
 
@@ -160,7 +162,7 @@ public partial class App : Application
                     : "Not connected";
                 var item = new ToggleMenuFlyoutItem
                 {
-                    Text = $"{adapter.DisplayName}  —  {network}",
+                    Text = $"{adapter.DisplayName} · {network}",
                     IsChecked = adapter.IsPrimary,
                     IsEnabled = Networks.CanEdit && (connected || adapter.PriorityIndex != 0),
                     Icon = new FontIcon { Glyph = AdapterCardViewModel.GlyphFor(adapter.Kind) },

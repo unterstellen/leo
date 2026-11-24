@@ -17,7 +17,7 @@
                     <StackPanel Spacing="2">
                         <TextBlock Text="Start LEO at login" Style="{StaticResource BodyStrongTextBlockStyle}" />
                         <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
-                                   Text="Opens LEO in the system tray when you sign in. Your network rules keep working either way — the LEO service always starts with Windows." />
+                                   Text="Opens LEO in the system tray when you sign in. Your network rules keep working either way, because the LEO service always starts with Windows." />
                     </StackPanel>
                     <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" OnContent="On" OffContent="Off"
                                   IsOn="{x:Bind ViewModel.StartAtLogin, Mode=TwoWay}" />

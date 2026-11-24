@@ -9,18 +9,29 @@ using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace Leo.App.ViewModels;
 
-/// <summary>A network an app can be sent through.</summary>
-/// <summary>A network a rule may target: physical networks, plus VPNs (M6; <see cref="IsVpn"/>, IsUp = connected).</summary>
-public sealed record NetworkOption(string Id, string Name, bool IsUp, bool IsPrimary, bool IsVpn = false)
+/// <summary>
+/// A target a rule may pick: physical networks, VPNs (M6; <see cref="IsVpn"/>, IsUp = connected) and bonds (M7;
+/// <see cref="IsBond"/>, Id = "bond:&lt;id&gt;", IsUp = at least one member usable).
+/// </summary>
+public sealed record NetworkOption(string Id, string Name, bool IsUp, bool IsPrimary, bool IsVpn = false, bool IsBond = false)
 {
-    /// <summary>Menu text: "WiFi (Primary)", "Tailscale · VPN (not connected)".</summary>
-    public string Label => Name + (IsVpn ? " · VPN" : "") + (IsPrimary ? " (Primary)" : "") + (IsUp ? "" : " (not connected)");
+    /// <summary>Menu text: "WiFi (Primary)", "Tailscale · VPN (not connected)", "Fast downloads · bond".</summary>
+    public string Label => Name + (IsVpn ? " · VPN" : "") + (IsBond ? " · bond" : "") + (IsPrimary ? " (Primary)" : "")
+        + (IsUp ? "" : IsBond ? " (no network in it is available)" : " (not connected)");
 
-    /// <summary>Rule targets for a picker, from the service's snapshot: physical networks by priority, then VPNs.</summary>
-    public static IReadOnlyList<NetworkOption> From(NetworkSnapshot snap) =>
+    /// <summary>Rule targets for a picker: physical networks by priority, then VPNs, then bonds.</summary>
+    public static IReadOnlyList<NetworkOption> From(NetworkSnapshot snap, IReadOnlyList<BondInfo>? bonds = null) =>
         snap.Adapters.Where(a => a.IsPrimaryCandidate || a.Vpn is not null)
             .OrderBy(a => a.Vpn is not null).ThenBy(a => a.PriorityIndex ?? int.MaxValue).ThenBy(a => a.DisplayName)
-            .Select(a => new NetworkOption(a.Id, a.DisplayName, a.Vpn?.Connected ?? a.Status == AdapterStatus.Up, a.IsPrimary, a.Vpn is not null)).ToList();
+            .Select(a => new NetworkOption(a.Id, a.DisplayName, a.Vpn?.Connected ?? a.Status == AdapterStatus.Up, a.IsPrimary, a.Vpn is not null))
+            .Concat((bonds ?? []).Select(b => new NetworkOption(BondTargets.For(b.Id), b.Name, b.UsableCount > 0, false, IsBond: true)))
+            .ToList();
+
+    /// <summary>"WiFi", "bond 'Fast downloads'", or a placeholder when the target is gone.</summary>
+    public static string NameOf(string targetId, NetworkSnapshot snap, IReadOnlyList<BondInfo>? bonds) =>
+        BondTargets.IsBond(targetId)
+            ? (bonds ?? []).FirstOrDefault(b => b.Id == BondTargets.BondId(targetId)) is { } b ? $"bond '{b.Name}'" : "a bond that was removed"
+            : snap.Adapters.FirstOrDefault(a => a.Id == targetId)?.DisplayName ?? "Network not connected";
 }
 
 /// <summary>Apps page: split tunneling by app (LEO.md §6.4, M3). All changes come from explicit user actions.</summary>
@@ -41,7 +52,19 @@ public sealed partial class AppsViewModel : ObservableObject
 
     public ObservableCollection<AppRuleCardViewModel> Rules { get; } = [];
 
-    [ObservableProperty] public partial bool CanEdit { get; set; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterButtonEnabled))]
+    public partial bool CanEdit { get; set; }
+
+    /// <summary>
+    /// True while an on/off request is being applied (the engine starts or stops). The button is greyed out and
+    /// says "Turning on…/off…", so a quick second click can't send the same request again unnoticed.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(MasterButtonEnabled))]
+    public partial bool MasterBusy { get; set; }
+
+    public bool MasterButtonEnabled => CanEdit && !MasterBusy;
     [ObservableProperty] public partial bool MasterEnabled { get; set; } = true;
     [ObservableProperty] public partial string MasterButtonText { get; set; } = "Turn off";
     [ObservableProperty] public partial string StatusTitle { get; set; } = "";
@@ -50,21 +73,27 @@ public sealed partial class AppsViewModel : ObservableObject
     [ObservableProperty] public partial bool IsEmpty { get; set; } = true;
     [ObservableProperty] public partial string? ErrorText { get; set; }
 
-    public IReadOnlyList<NetworkOption> Networks => NetworkOption.From(_connection.Networks);
+    public IReadOnlyList<NetworkOption> Networks => NetworkOption.From(_connection.Networks, _connection.SplitTunnel.Bonds);
 
     [ObservableProperty] public partial string? VpnBanner { get; set; }
 
-    public string NetworkName(string adapterId) =>
-        _connection.Networks.Adapters.FirstOrDefault(a => a.Id == adapterId)?.DisplayName ?? "Network not connected";
+    public string NetworkName(string adapterId) => NetworkOption.NameOf(adapterId, _connection.Networks, _connection.SplitTunnel.Bonds);
 
     // ── Actions (from user events only) ─────────────────────────────────────
 
     public async Task ToggleMasterAsync()
     {
-        if (!CanEdit) return;
+        if (!CanEdit || MasterBusy) return;
         var enable = !_connection.SplitTunnel.Enabled;
         UiLog.Write($"Split tunneling: switch {(enable ? "on" : "off")}");
-        Show(await _connection.TryInvokeAsync(c => c.SetSplitTunnelEnabledAsync(enable)));
+        MasterBusy = true;
+        MasterButtonText = enable ? "Turning on…" : "Turning off…";
+        try { Show(await _connection.TryInvokeAsync(c => c.SetSplitTunnelEnabledAsync(enable))); }
+        finally
+        {
+            MasterBusy = false;
+            Refresh();
+        }
     }
 
     /// <summary>Creates a rule for a picked app, sending it through the best network that isn't the Primary.</summary>
@@ -77,7 +106,7 @@ public sealed partial class AppsViewModel : ObservableObject
             return;
         }
         var nets = Networks;
-        var physical = nets.Where(n => !n.IsVpn).ToList();
+        var physical = nets.Where(n => !n.IsVpn && !n.IsBond).ToList();
         var target = physical.FirstOrDefault(n => n.IsUp && !n.IsPrimary) ?? physical.FirstOrDefault(n => n.IsPrimary) ?? physical.FirstOrDefault();
         if (target is null)
         {
@@ -127,14 +156,16 @@ public sealed partial class AppsViewModel : ObservableObject
         var connected = _connection.State == ConnectionState.Connected;
         CanEdit = connected && _connection.Access == ClientAccess.Full;
         MasterEnabled = info.Enabled;
-        MasterButtonText = info.Enabled ? "Turn off" : "Turn on";
+        if (!MasterBusy) MasterButtonText = info.Enabled ? "Turn off" : "Turn on";
 
         (StatusSeverity, StatusTitle, StatusText) = !connected
             ? (InfoBarSeverity.Warning, "LEO service not connected", "App rules can't be shown or changed right now.")
             : info.State switch
             {
                 SplitTunnelEngineState.Running => (InfoBarSeverity.Success, "Split tunneling is on",
-                    info.UnruledVia is { } via ? $"Apps below use their chosen network. Everything else goes through {via} (that VPN takes all unruled traffic)." : "Apps below use their chosen network. Everything else uses your Primary network."),
+                    info.UnruledVia is { } via ? $"Apps below use their chosen network. Everything else goes through {via} (that VPN takes all unruled traffic)."
+                    : info.UnruledBondNow is { } bond ? $"Apps below use their chosen network. Everything else goes through bond '{bond}'."
+                    : "Apps below use their chosen network. Everything else uses your Primary network."),
                 SplitTunnelEngineState.Starting => (InfoBarSeverity.Informational, "Starting…", "LEO is starting its routing engine."),
                 SplitTunnelEngineState.Error => (InfoBarSeverity.Error, "Split tunneling paused", info.Message ?? "The routing engine stopped."),
                 SplitTunnelEngineState.NotInstalled => (InfoBarSeverity.Error, "Routing engine missing", info.Message ?? "Reinstall LEO."),
