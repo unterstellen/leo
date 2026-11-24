@@ -333,7 +333,7 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 ```
 
 - The service runs from Program Files (admin-only writable), never from `bin\`, so rebuilding never collides with the running service.
-- **CI:** `.github/workflows/build.yml` builds the solution (Release) and runs the tests on GitHub-hosted `windows-latest` for every push to canary/main/preview and every pull request. Tests run through `LEO.slnx` so the x64 platform mapping (`bin\x64\Release`) matches the build. Live tests stay opt-in (`LEO_LIVE_TESTS`) and never run in CI.
+- **CI:** `.github/workflows/build.yml` builds the solution (Release) and runs the tests on GitHub-hosted `windows-latest` for every push to canary (since 2026-11-24 only canary: preview and main get canary's code through pull requests, which used to repeat the same build up to four times; Run workflow builds any branch by hand). Tests run through `LEO.slnx` so the x64 platform mapping (`bin\x64\Release`) matches the build. Live tests stay opt-in (`LEO_LIVE_TESTS`) and never run in CI.
 - `LEO.Service.exe` with no arguments runs as a console app when started from a terminal. Logs: `%ProgramData%\UNTERSTELLEN\LEO\logs\` (service), `%LocalAppData%\UNTERSTELLEN\LEO\logs\` (UI connection errors).
 - Optional test switches: `LEO_LIVE_TESTS=1` runs read-only checks against the installed service; `LEO_DUMP=<file.dmp>` prints managed stacks and faulted tasks from a service dump (ClrMD, dev-only).
 
