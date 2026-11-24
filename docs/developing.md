@@ -104,6 +104,8 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # start the 
 .\tools\build-release.ps1       # artifacts\release\LEO-<version>-x64.msi + payload-signatures.txt
 ```
 
+In Rider: pick **Build MSI** in the run configurations list (next to *Deploy service*) and press Run. It runs the same script; the MSI lands in `artifacts\release\`.
+
 It publishes the app and the service self-contained (.NET included, ReadyToRun only for LEO's own files, English only) into one install folder, stops if the two publish the same file with different content, lists every exe/dll with its signature status, and builds the MSI with WiX v5 (from NuGet). It never signs. Smart App Control blocks unsigned builds, so test the MSI on a PC or VM where it's off, **not** on top of your dev setup: the MSI removes a dev-deployed service (`tools\dev-service.ps1 deploy`), and `dev-service.ps1` refuses to deploy over an MSI install.
 
 What an installed LEO does differently from a dev build:

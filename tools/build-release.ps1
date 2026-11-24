@@ -81,6 +81,11 @@ if ($clashes.Count -gt 0) {
     $clashes | ForEach-Object { Write-Host "  clash: $_" -ForegroundColor Red }
     throw "App and service publish the same file with different content ($($clashes.Count)). Align the package versions, or fall back to two folders (LEO.md §24.1)."
 }
+# The app's own resources (LEO.pri, with the compiled XAML inside). Without them the installed app crashes right after
+# creating its tray icon (first MSI test, 2026-11-24). LEO.App.csproj needs EnableMsixTooling for publish to include it.
+$pri = Join-Path $payload 'LEO.pri'
+if (-not (Test-Path $pri)) { throw "LEO.pri is missing from the payload: the app's XAML wouldn't load (EnableMsixTooling in LEO.App.csproj)." }
+if (-not (Select-String -Path $pri -Pattern 'XBF' -SimpleMatch -Quiet)) { throw "LEO.pri has no compiled XAML inside: the app's pages wouldn't load." }
 
 # ── 3. Engine + licence ──────────────────────────────────────────────────────
 $engine = Join-Path $root 'artifacts\engine\mihomo.exe'
