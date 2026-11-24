@@ -68,6 +68,12 @@ public sealed class SplitTunnelManager(
         if (rule.Kind is AppMatchKind.ExactPath or AppMatchKind.Folder && !Path.IsPathFullyQualified(rule.Pattern))
             throw new ArgumentException("Use a full path, e.g. C:\\Program Files\\App\\app.exe.");
         if (string.IsNullOrWhiteSpace(rule.TargetAdapterId)) throw new ArgumentException("Choose the network for this app.");
+        if (BondTargets.IsBond(rule.TargetAdapterId))
+        {
+            CheckBondExists(rule.TargetAdapterId);
+            if (RuleTargets.CheckBond(rule) is { } bondProblem) throw new ArgumentException(bondProblem);
+            rule.TargetVpnKey = null;
+        }
         var target = networks.Snapshot.Adapters.FirstOrDefault(a => a.Id.Equals(rule.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
         if (target is not null && RuleTargets.Check(rule, target.Kind, target.DisplayName) is { } problem) throw new ArgumentException(problem);
         if (target is not null) rule.TargetVpnKey = target.Vpn?.Key;
@@ -101,6 +107,11 @@ public sealed class SplitTunnelManager(
     {
         if (DestinationMatcher.Normalize(rule) is { } problem) throw new ArgumentException(problem);
         if (string.IsNullOrWhiteSpace(rule.TargetAdapterId)) throw new ArgumentException("Choose the network for this destination.");
+        if (BondTargets.IsBond(rule.TargetAdapterId))
+        {
+            CheckBondExists(rule.TargetAdapterId);
+            rule.TargetVpnKey = null;
+        }
         var target = networks.Snapshot.Adapters.FirstOrDefault(a => a.Id.Equals(rule.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
         if (target is not null && RuleTargets.Check(null, target.Kind, target.DisplayName) is { } targetProblem) throw new ArgumentException(targetProblem);
         if (target is not null) rule.TargetVpnKey = target.Vpn?.Key;
@@ -189,8 +200,8 @@ public sealed class SplitTunnelManager(
             }
         }
 
-        var (apps, dests, enabled) = config.Read(c => (c.SplitTunnel.AppRules.Select(Clone).ToList(),
-            c.SplitTunnel.DestinationRules.Select(Clone).ToList(), c.SplitTunnel.Enabled));
+        var (apps, dests, enabled, bonds) = config.Read(c => (c.SplitTunnel.AppRules.Select(Clone).ToList(),
+            c.SplitTunnel.DestinationRules.Select(Clone).ToList(), c.SplitTunnel.Enabled, c.SplitTunnel.Bonds.Select(b => b.Clone()).ToList()));
         var snap = networks.Snapshot;
         ResolveVpnTargets(apps, dests, snap);
         var query = new RouteQuery(host, addresses, port, DestinationProtocol.Tcp, appPath);
@@ -203,7 +214,7 @@ public sealed class SplitTunnelManager(
         {
             var app = d.AppRuleId is null ? null : apps.FirstOrDefault(a => a.Id == d.AppRuleId);
             ruleText = "Rule: " + DestinationMatcher.Describe(d) + (app is null ? "" : $" from {app.DisplayName}");
-            network = RouteNow(d.Enabled, d.TargetAdapterId, d.OnTargetDown, snap);
+            network = Route(d.Enabled, d.TargetAdapterId, d.OnTargetDown, snap, bonds);
             why = d.Kind == DestinationKind.IpRange && !IPAddress.TryParse(host, out _)
                 ? $"{host} resolves to {string.Join(", ", addresses.Where(a => DestinationMatcher.TryParseRange(d.Value, out var n, out var p) && DestinationMatcher.InRange(a, n, p)))}, which is in {d.Value}."
                 : app is not null ? "This app + destination combo beats every other rule."
@@ -212,14 +223,17 @@ public sealed class SplitTunnelManager(
         else if (decision.App is { } a)
         {
             ruleText = $"App rule: {a.DisplayName}";
-            network = RouteNow(a.Enabled, a.TargetAdapterId, a.OnTargetDown, snap);
+            network = Route(a.Enabled, a.TargetAdapterId, a.OnTargetDown, snap, bonds);
             why = "No destination rule matches, so the app's rule decides.";
         }
         else
         {
             ruleText = "No rule";
-            network = unruledVia is null ? primaryName : $"{unruledVia} (follows the VPN)";
-            var where = unruledVia is null ? "your Primary network" : $"{unruledVia}, because that VPN takes all unruled traffic";
+            var unruledBond = _state == SplitTunnelEngineState.Running ? Info.UnruledBondNow : null;
+            network = unruledVia is not null ? $"{unruledVia} (follows the VPN)"
+                : unruledBond is not null ? $"bond '{unruledBond}' (everything else uses it)" : primaryName;
+            var where = unruledVia is not null ? $"{unruledVia}, because that VPN takes all unruled traffic"
+                : unruledBond is not null ? $"bond '{unruledBond}', because everything else uses it" : "your Primary network";
             why = appPath is null ? $"No destination rule matches, so it uses {where}." : $"Neither a destination nor an app rule matches, so it uses {where}.";
         }
         if (!enabled) { network = primaryName; why = "Split tunneling is switched off, so everything uses your Primary network. " + why; }
@@ -252,6 +266,232 @@ public sealed class SplitTunnelManager(
         await networks.RefreshAsync(ct);
         await SyncAsync(ct);
     }
+
+    // ── Bonds (M7, LEO.md §22) ──────────────────────────────────────────────
+
+    public async Task<string> SaveBondAsync(Bond bond, CancellationToken ct)
+    {
+        if (bond is null) throw new ArgumentException("Nothing to save.");
+        if (string.IsNullOrWhiteSpace(bond.Id)) bond.Id = Guid.NewGuid().ToString("N");
+        var others = config.Read(c => c.SplitTunnel.Bonds.Select(b => b.Clone()).ToList());
+        if (BondRules.Validate(bond, BondAdapters(networks.Snapshot), others) is { } problem) throw new ArgumentException(problem);
+        config.Update(c =>
+        {
+            var list = c.SplitTunnel.Bonds;
+            var i = list.FindIndex(b => b.Id == bond.Id);
+            if (i >= 0) list[i] = bond; else list.Add(bond);
+            return true;
+        });
+        // Bond names are the user's labels; the log keeps ids, mode and counts.
+        log.LogInformation("Bond saved: {Id} ({Mode}, {Count} networks)", bond.Id, bond.Mode, bond.Members.Count);
+        _gaveUp = _routesPaused = false;
+        await SyncAsync(ct);
+        return bond.Id;
+    }
+
+    public async Task DeleteBondAsync(string bondId, CancellationToken ct)
+    {
+        var removed = false;
+        config.Update(c =>
+        {
+            removed = c.SplitTunnel.Bonds.RemoveAll(b => b.Id == bondId) > 0;
+            if (removed && c.SplitTunnel.UnruledBondId == bondId) c.SplitTunnel.UnruledBondId = null;
+            return removed;
+        });
+        if (!removed) throw new KeyNotFoundException("That bond doesn't exist anymore.");
+        log.LogInformation("Bond deleted: {Id}", bondId);
+        await SyncAsync(ct);
+    }
+
+    public async Task MoveBondAsync(string bondId, bool up, CancellationToken ct)
+    {
+        var found = false;
+        config.Update(c =>
+        {
+            var list = c.SplitTunnel.Bonds;
+            var i = list.FindIndex(b => b.Id == bondId);
+            found = i >= 0;
+            var j = up ? i - 1 : i + 1;
+            if (i < 0 || j < 0 || j >= list.Count) return false;
+            (list[i], list[j]) = (list[j], list[i]);
+            return true;
+        });
+        if (!found) throw new KeyNotFoundException("That bond doesn't exist anymore.");
+        await SyncAsync(ct);
+    }
+
+    /// <summary>"Everything else uses": a bond, or null = the Primary (machine-wide).</summary>
+    public async Task SetUnruledBondAsync(string? bondId, CancellationToken ct)
+    {
+        bondId = string.IsNullOrWhiteSpace(bondId) ? null : bondId;
+        if (bondId is not null && !config.Read(c => c.SplitTunnel.Bonds.Any(b => b.Id == bondId)))
+            throw new KeyNotFoundException("That bond doesn't exist anymore.");
+        config.Update(c =>
+        {
+            if (c.SplitTunnel.UnruledBondId == bondId) return false;
+            c.SplitTunnel.UnruledBondId = bondId;
+            return true;
+        });
+        log.LogInformation("Everything else uses {Target}", bondId is null ? "the Primary" : $"bond {bondId}");
+        _gaveUp = _routesPaused = false;
+        await SyncAsync(ct);
+    }
+
+    /// <summary>
+    /// Per-member numbers of each bond in the engine: open connections and their bytes so far, and the engine's own
+    /// alive flag. Computed on demand from the engine, in memory only; nothing about destinations leaves this method.
+    /// </summary>
+    public async Task<BondsLiveInfo> GetBondsLiveAsync(CancellationToken ct)
+    {
+        var running = RunningEngine;
+        var plan = _lastPlan;
+        if (running is null || plan is null) return new BondsLiveInfo(false, []);
+        IReadOnlyList<Leo.Core.Stats.EngineConnection> conns;
+        IReadOnlyDictionary<string, bool> alive;
+        try
+        {
+            conns = await running.GetConnectionsAsync(ct);
+            alive = await running.GetAliveAsync(plan.Bonds.SelectMany(b => b.Members), plan.BondCheck.Url, ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException && !ct.IsCancellationRequested)
+        {
+            return new BondsLiveInfo(true, []);
+        }
+        var bonds = ResolveBonds(config.Read(c => c.SplitTunnel.Bonds.Select(b => b.Clone()).ToList()), networks.Snapshot);
+        var list = new List<BondLive>();
+        foreach (var pb in plan.Bonds)
+        {
+            var b = bonds.FirstOrDefault(x => x.Id == pb.BondId);
+            if (b is null) continue;
+            var group = EnginePlan.BondGroupName(b.Id);
+            var mine = conns.Where(c => c.Chains.Contains(group)).ToList();
+            list.Add(new BondLive(b.Id, b.Members.Select(m =>
+            {
+                var outbound = EnginePlan.OutboundName(m.AdapterId);
+                var onIt = mine.Where(c => c.Chains.Count > 0 && c.Chains[0] == outbound).ToList();
+                return new BondLiveMember(m.AdapterId, onIt.Count, onIt.Sum(c => c.Download), onIt.Sum(c => c.Upload),
+                    alive.TryGetValue(outbound, out var a) ? a : null);
+            }).ToList()));
+        }
+        return new BondsLiveInfo(true, list);
+    }
+
+    private void CheckBondExists(string target)
+    {
+        var id = BondTargets.BondId(target);
+        if (!config.Read(c => c.SplitTunnel.Bonds.Any(b => b.Id == id)))
+            throw new ArgumentException("That bond doesn't exist anymore. Choose another network.");
+    }
+
+    /// <summary>Physical networks (and VPNs, so validation can name them) as bond logic sees them.</summary>
+    private static List<BondAdapter> BondAdapters(NetworkSnapshot snap) =>
+        snap.Adapters.Where(a => a.IsPrimaryCandidate || a.Kind == AdapterKind.Vpn).Select(a => new BondAdapter(a.Id, a.Mac, a.DisplayName, a.Kind,
+            a.Status == AdapterStatus.Up, a.IsPrimaryCandidate && EnginePlan.IsUsable(ToEngine(a)), a.Network?.IsMetered ?? false,
+            a.Network?.Key)).ToList();
+
+    /// <summary>Bond members point at today's adapter (a re-plugged tether comes back with a new id, same MAC).</summary>
+    private static List<Bond> ResolveBonds(IEnumerable<Bond> bonds, NetworkSnapshot snap)
+    {
+        var adapters = BondAdapters(snap);
+        return bonds.Select(b =>
+        {
+            var copy = b.Clone();
+            foreach (var m in copy.Members)
+                if (BondRules.Resolve(m, adapters) is { } a) m.AdapterId = a.Id;
+            return copy;
+        }).ToList();
+    }
+
+    /// <summary>"Bond 'Fast': WiFi + Ethernet", "Bond 'Fast': WiFi (Ethernet unavailable)", "WiFi (fallback: no network in bond 'Fast' is available)".</summary>
+    private static string BondRoute(Bond? b, OnTargetDown mode, NetworkSnapshot snap)
+    {
+        if (b is null) return "Not active (its bond was removed)";
+        var members = BondRules.Members(b, BondAdapters(snap));
+        var usable = members.Where(x => x.Adapter is { Usable: true }).Select(x => x.Adapter!.Name).ToList();
+        var down = members.Where(x => x.Adapter is not { Usable: true }).Select(x => x.Adapter?.Name ?? "a network that isn't plugged in").ToList();
+        var primary = snap.Adapters.FirstOrDefault(a => a.IsPrimary)?.DisplayName ?? "Primary";
+        if (usable.Count == 0)
+            return mode == OnTargetDown.Block ? $"Blocked (no network in bond '{b.Name}' is available)"
+                : $"{primary} (fallback: no network in bond '{b.Name}' is available)";
+        var head = b.Mode == BondMode.Fastest && usable.Count > 1
+            ? $"Bond '{b.Name}': the fastest of {string.Join(" and ", usable)}"
+            : $"Bond '{b.Name}': {string.Join(" + ", usable)}";
+        return down.Count == 0 ? head : $"{head} ({string.Join(", ", down)} unavailable)";
+    }
+
+    /// <summary><see cref="RouteNow"/> for adapters, <see cref="BondRoute"/> for bonds.</summary>
+    private static string Route(bool ruleEnabled, string targetId, OnTargetDown mode, NetworkSnapshot snap, IReadOnlyList<Bond> bonds) =>
+        !BondTargets.IsBond(targetId) ? RouteNow(ruleEnabled, targetId, mode, snap)
+        : !ruleEnabled ? "Off"
+        : BondRoute(ResolveBonds(bonds.Where(b => b.Id == BondTargets.BondId(targetId)), snap).FirstOrDefault(), mode, snap);
+
+    private static bool BondUsable(string targetId, NetworkSnapshot snap, IReadOnlyList<Bond> bonds) =>
+        bonds.FirstOrDefault(b => b.Id == BondTargets.BondId(targetId)) is { } b && BondRules.Usable(b, BondAdapters(snap)).Count > 0;
+
+    /// <summary>
+    /// After each apply: when a bond member's usability (LEO's own health) changes, ask the engine to re-check that bond at
+    /// once. Only when a member is really gone (disconnected, or failing long enough that failover demoted it) close the
+    /// bond's connections on it so apps reconnect over the others (LEO.md §22.3). A single failed probe on a busy link is
+    /// not a loss: found live, closing on it killed healthy downloads (§23).
+    /// </summary>
+    private async Task WatchBondMembersAsync(EnginePlan plan, bool fresh, CancellationToken ct)
+    {
+        var snap = networks.Snapshot;
+        var adapters = BondAdapters(snap);
+        var healthyIds = snap.Adapters.Where(a => a.IsPrimaryCandidate && a.Status == AdapterStatus.Up && !a.IsDemoted)
+            .Select(a => a.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var usableNow = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var healthyNow = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pb in plan.Bonds)
+            if (_bonds.FirstOrDefault(b => b.Id == pb.BondId) is { } b)
+            {
+                usableNow[pb.BondId] = BondRules.Usable(b, adapters).Select(a => a.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                healthyNow[pb.BondId] = b.Members.Select(m => m.AdapterId).Where(healthyIds.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            }
+        var usableBefore = _bondUsable;
+        var healthyBefore = _bondHealthy;
+        _bondUsable = usableNow;
+        _bondHealthy = healthyNow;
+        if (fresh) return;
+        foreach (var (id, healthy) in healthyNow)
+        {
+            var usableChanged = usableBefore.TryGetValue(id, out var wasUsable) && !wasUsable.SetEquals(usableNow[id]);
+            var lost = healthyBefore.TryGetValue(id, out var wasHealthy) ? wasHealthy.Except(healthy, StringComparer.OrdinalIgnoreCase).ToList() : [];
+            if (!usableChanged && lost.Count == 0) continue;
+            var group = EnginePlan.BondGroupName(id);
+            var set = usableNow[id];
+            try
+            {
+                if (usableChanged) await engine.CheckGroupAsync(group, plan.BondCheck.Url, ct);
+                if (lost.Count == 0) continue;
+                var lostOutbounds = lost.Select(l => EnginePlan.OutboundName(l)).ToHashSet(StringComparer.Ordinal);
+                var conns = await engine.GetConnectionsAsync(ct);
+                var closing = conns.Where(c => c.Chains.Count > 0 && lostOutbounds.Contains(c.Chains[0]) && c.Chains.Contains(group)).ToList();
+                foreach (var c in closing) await engine.CloseConnectionAsync(c.Id, ct);
+                log.LogInformation("Bond {Id}: {Usable} of {Total} usable; closed {Count} connection(s) on the lost network(s)",
+                    id, set.Count, _bonds.FirstOrDefault(b => b.Id == id)?.Members.Count ?? 0, closing.Count);
+                if (_bonds.FirstOrDefault(b => b.Id == id) is { } bond)
+                    foreach (var l in lost)
+                    {
+                        var name = adapters.FirstOrDefault(a => a.Id.Equals(l, StringComparison.OrdinalIgnoreCase))?.Name ?? "A network";
+                        var rest = adapters.Where(a => set.Contains(a.Id)).Select(a => a.Name).ToList();
+                        notifications.Publish(NotificationKind.BondMemberLost, $"Bond '{bond.Name}'",
+                            rest.Count > 0 ? $"{name} stopped working. The bond keeps going on {string.Join(" and ", rest)}."
+                                : $"{name} stopped working, and no other network in the bond is available.", l);
+                    }
+            }
+            catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException && !ct.IsCancellationRequested)
+            {
+                log.LogInformation("Bond {Id} check failed: {Message}", id, ex.Message);
+            }
+        }
+    }
+
+    private List<Bond> _bonds = [];
+    private string? _unruledBondSetting;
+    private EnginePlan? _lastPlan;
+    private Dictionary<string, HashSet<string>> _bondUsable = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, HashSet<string>> _bondHealthy = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Rules that target a VPN find it again when it came back as a new adapter (same key; LEO.md §20.2).</summary>
     private static void ResolveVpnTargets(IEnumerable<AppRule> apps, IEnumerable<DestinationRule> dests, NetworkSnapshot snap)
@@ -378,6 +618,13 @@ public sealed class SplitTunnelManager(
             _dests = dests;
             ReconcileFailClosed(enabled, rules);
             _dns = dns;
+            var (bonds, unruledBond) = config.Read(c => (c.SplitTunnel.Bonds.Select(b => b.Clone()).ToList(), c.SplitTunnel.UnruledBondId));
+            _bonds = ResolveBonds(bonds, networks.Snapshot);
+            _unruledBondSetting = unruledBond is not null && _bonds.Any(b => b.Id == unruledBond) ? unruledBond : null;
+            // Rules pointing at a deleted bond aren't active at all (not "fall back"/"block"): shown "Not active".
+            bool BondKnown(string target) => !BondTargets.IsBond(target) || _bonds.Any(b => b.Id == BondTargets.BondId(target));
+            var planRules = rules.Where(r => BondKnown(r.TargetAdapterId)).ToList();
+            var planDests = dests.Where(d => BondKnown(d.TargetAdapterId)).ToList();
 
             var fingerprint = enabled + "|" + string.Join("|", rules.Select(r => $"{r.Id}:{r.Enabled}:{r.IncludeChildren}:{r.Kind}:{r.Pattern}"));
             if (fingerprint != _rulesFingerprint)
@@ -386,7 +633,8 @@ public sealed class SplitTunnelManager(
                 children.SetRules(enabled ? rules : []);
             }
 
-            var wanted = enabled && (rules.Any(r => r.Enabled) || DestinationMatcher.Ordered(dests, rules).Count > 0);
+            var wanted = enabled && (planRules.Any(r => r.Enabled) || DestinationMatcher.Ordered(planDests, planRules).Count > 0
+                                     || _unruledBondSetting is not null);
             if (!wanted)
             {
                 if (engine.IsRunning)
@@ -397,6 +645,7 @@ public sealed class SplitTunnelManager(
                 }
                 _structureKey = null;
                 _unruledVpnId = null;
+                _lastPlan = null;
                 SetState(SplitTunnelEngineState.Off, enabled ? null : "Split tunneling is switched off.", rules);
                 return;
             }
@@ -473,7 +722,8 @@ public sealed class SplitTunnelManager(
                 }
             }
 
-            var plan = BuildPlan(rules, dests, dns, picture);
+            var plan = BuildPlan(planRules, planDests, dns, picture);
+            var fresh = false;
             if (!engine.IsRunning)
             {
                 if (DateTimeOffset.Now < _retryAt)
@@ -485,6 +735,7 @@ public sealed class SplitTunnelManager(
                 try
                 {
                     await engine.StartAsync(plan, ct);
+                    fresh = true;
                     _structureKey = plan.StructureKey;
                     _engineSince = DateTimeOffset.Now;
                     _unruledVpnId = null;
@@ -518,6 +769,8 @@ public sealed class SplitTunnelManager(
                 if (plan.UnruledVpnId is not null && previous is null) await CloseUnruledPhysicalAsync(ct);
             }
 
+            _lastPlan = plan;
+            await WatchBondMembersAsync(plan, fresh, ct);
             SetState(SplitTunnelEngineState.Running, null, rules);
         }
         finally
@@ -600,7 +853,9 @@ public sealed class SplitTunnelManager(
     {
         var snap = networks.Snapshot;
         var adapters = snap.Adapters.Where(a => a.IsPrimaryCandidate || a.Kind == AdapterKind.Vpn).Select(ToEngine).ToList();
-        return EnginePlan.Build(adapters, snap.PrimaryAdapterId, rules, children.Children, dests, dns, picture.Nrpt);
+        var check = BondHealthCheck.From(config.Read(c => c.Health.ProbeTargets.Select(t => (t.Url, t.Expect)).ToList()));
+        return EnginePlan.Build(adapters, snap.PrimaryAdapterId, rules, children.Children, dests, dns, picture.Nrpt,
+            _bonds, _unruledBondSetting, check);
     }
 
     private List<DestinationRule> _dests = [];
@@ -617,10 +872,12 @@ public sealed class SplitTunnelManager(
         var infos = rules.Select(r =>
         {
             var target = snap.Adapters.FirstOrDefault(a => a.Id.Equals(r.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
-            var usable = target is not null && EnginePlan.IsUsable(ToEngine(target));
+            var isBond = BondTargets.IsBond(r.TargetAdapterId);
+            var usable = isBond ? BondUsable(r.TargetAdapterId, snap, _bonds) : target is not null && EnginePlan.IsUsable(ToEngine(target));
             var route = !r.Enabled ? "Off"
+                : isBond && !_bonds.Any(b => b.Id == BondTargets.BondId(r.TargetAdapterId)) ? "Not active (its bond was removed)"
                 : state != SplitTunnelEngineState.Running ? "Not active"
-                : RouteNow(true, r.TargetAdapterId, r.OnTargetDown, snap);
+                : Route(true, r.TargetAdapterId, r.OnTargetDown, snap, _bonds);
             return new AppRuleInfo(r.Id, r.DisplayName, r.Kind, r.Pattern, r.TargetAdapterId, r.OnTargetDown,
                 r.IncludeChildren, r.Enabled, route, usable, childCounts.GetValueOrDefault(r.Id));
         }).ToList();
@@ -629,14 +886,16 @@ public sealed class SplitTunnelManager(
         var destInfos = _dests.Select(d =>
         {
             var target = snap.Adapters.FirstOrDefault(a => a.Id.Equals(d.TargetAdapterId, StringComparison.OrdinalIgnoreCase));
-            var usable = target is not null && EnginePlan.IsUsable(ToEngine(target));
+            var isBond = BondTargets.IsBond(d.TargetAdapterId);
+            var usable = isBond ? BondUsable(d.TargetAdapterId, snap, _bonds) : target is not null && EnginePlan.IsUsable(ToEngine(target));
             var app = d.AppRuleId is null ? null : rules.FirstOrDefault(a => a.Id == d.AppRuleId);
             var rank = ordered.FindIndex(o => o.Id == d.Id) + 1;
             var route = !d.Enabled ? "Off"
+                : isBond && !_bonds.Any(b => b.Id == BondTargets.BondId(d.TargetAdapterId)) ? "Not active (its bond was removed)"
                 : d.AppRuleId is not null && app is null ? "Not active (its app rule was removed)"
                 : app is { Enabled: false } ? $"Not active ({app.DisplayName}'s rule is off)"
                 : state != SplitTunnelEngineState.Running ? "Not active"
-                : RouteNow(true, d.TargetAdapterId, d.OnTargetDown, snap);
+                : Route(true, d.TargetAdapterId, d.OnTargetDown, snap, _bonds);
             return new DestinationRuleInfo(d.Id, d.DisplayName, d.Kind, d.Value, d.Ports, d.Protocol, d.AppRuleId, app?.DisplayName,
                 d.TargetAdapterId, d.OnTargetDown, d.Enabled, DestinationMatcher.Describe(d), route, usable, rank);
         }).ToList();
@@ -656,7 +915,29 @@ public sealed class SplitTunnelManager(
                 ? $"{VpnName(picture.Firewall.VpnId, picture.FirewallOwner)} blocks traffic outside it. Rules that bypass it can't connect while it's on."
                 : null;
 
-        var info = new SplitTunnelInfo(config.Read(c => c.SplitTunnel.Enabled), state, message, infos, destInfos, dnsInfos, unruledVia, banner);
+        // M7: bonds with their members and route.
+        var bondAdapters = BondAdapters(snap);
+        var inEngine = state == SplitTunnelEngineState.Running ? _lastPlan?.Bonds.Select(b => b.BondId).ToHashSet(StringComparer.OrdinalIgnoreCase) : null;
+        var bondInfos = _bonds.Select(b =>
+        {
+            var members = BondRules.Members(b, bondAdapters).Select(x => new BondMemberInfo(x.Member.AdapterId,
+                x.Adapter?.Name ?? "Not plugged in", x.Member.Weight, x.Adapter is not null, x.Adapter?.Connected ?? false,
+                x.Adapter?.Usable ?? false, x.Adapter?.Metered ?? false)).ToList();
+            var target = BondTargets.For(b.Id);
+            var ruleCount = rules.Count(r => r.Enabled && r.TargetAdapterId == target) + _dests.Count(d => d.Enabled && d.TargetAdapterId == target);
+            var hints = new List<string>();
+            if (BondRules.SameRouterHint(b, bondAdapters) is { } same) hints.Add(same);
+            if (BondRules.Members(b, bondAdapters).Any(x => x.Adapter is { Connected: true }
+                    && snap.Adapters.FirstOrDefault(a => a.Id == x.Adapter.Id)?.IPv6.Any(ip => !ip.StartsWith("fe80", StringComparison.OrdinalIgnoreCase)) == true))
+                hints.Add("IPv6 isn't bonded: it follows Windows' routes (your Primary network).");
+            return new BondInfo(b.Id, b.Name, b.Mode, b.OnAllDown, members, members.Count(m => m.Usable), ruleCount,
+                inEngine?.Contains(b.Id) == true, BondRoute(b, b.OnAllDown, snap), hints);
+        }).ToList();
+        var unruledBondNow = state == SplitTunnelEngineState.Running && _lastPlan?.UnruledBondId is { } ub
+            ? _bonds.FirstOrDefault(b => b.Id == ub)?.Name : null;
+
+        var info = new SplitTunnelInfo(config.Read(c => c.SplitTunnel.Enabled), state, message, infos, destInfos, dnsInfos, unruledVia, banner,
+            bondInfos, _unruledBondSetting, unruledBondNow);
         if (!SameInfo(info, _info))
         {
             Volatile.Write(ref _info, info);

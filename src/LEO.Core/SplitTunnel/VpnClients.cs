@@ -96,6 +96,12 @@ public static class RuleTargets
             return $"A VPN can't carry its own traffic: {preset.Name} always uses a physical network.";
         return null;
     }
+
+    /// <summary>A user-facing problem with sending this traffic into a bond (LEO.md §22.1), or null.</summary>
+    public static string? CheckBond(AppRule? appRule) =>
+        appRule is not null && VpnClients.NamedBy(appRule) is { } preset
+            ? $"A VPN's tunnel is one connection; bonding can't speed it up. {preset.Name} keeps using a single network."
+            : null;
 }
 
 /// <summary>

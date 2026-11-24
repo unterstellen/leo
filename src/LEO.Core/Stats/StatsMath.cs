@@ -107,13 +107,17 @@ public static class ConnectionDescriber
         !string.IsNullOrWhiteSpace(c.Host) ? c.Host! : !string.IsNullOrWhiteSpace(c.SniffHost) ? c.SniffHost! : c.DestinationIp;
 
     /// <summary>Adapter carrying the connection, or null when blocked/unknown; plus its label.</summary>
-    public static (string? AdapterId, string Network) Network(EngineConnection c, IReadOnlyList<OutboundAdapter> outbounds)
+    public static (string? AdapterId, string Network) Network(EngineConnection c, IReadOnlyList<OutboundAdapter> outbounds,
+        IReadOnlyDictionary<string, string>? bondNames = null)
     {
         if (c.Chains.Count == 0) return (null, "Unknown");
         var leaf = c.Chains[0];
         if (leaf.StartsWith("REJECT", StringComparison.OrdinalIgnoreCase)) return (null, "Blocked");
         var o = outbounds.FirstOrDefault(x => x.Outbound == leaf);
         if (o is null) return (null, leaf);
+        // M7: "net-x ← bond-y ← …": carried by a bond member (not a fallback).
+        if (c.Chains.FirstOrDefault(g => g.StartsWith("bond-", StringComparison.Ordinal)) is { } bondGroup)
+            return (o.AdapterId, bondNames is not null && bondNames.TryGetValue(bondGroup, out var bn) ? $"{o.Name} via bond '{bn}'" : $"{o.Name} via a bond");
         // A rule's group "to-<x>-fb" that ended on another network's outbound "net-<y>" = fallback.
         var group = c.Chains[^1];
         var fallback = c.Chains.Count > 1 && group.StartsWith("to-", StringComparison.Ordinal)
@@ -126,7 +130,9 @@ public static class ConnectionDescriber
         IReadOnlyList<ChildProgram> children)
     {
         if (c.Rule.Equals("Match", StringComparison.OrdinalIgnoreCase))
-            return c.Chains.Count > 0 && c.Chains[0].StartsWith("vpn-", StringComparison.Ordinal) ? "No rule (follows the VPN)" : "No rule (Primary)";
+            return c.Chains.Count > 0 && c.Chains[0].StartsWith("vpn-", StringComparison.Ordinal) ? "No rule (follows the VPN)"
+                : c.Chains.Any(g => g.StartsWith("bond-", StringComparison.Ordinal)) ? "No rule (everything else uses the bond)"
+                : "No rule (Primary)";
         var addresses = IPAddress.TryParse(c.DestinationIp, out var ip) ? new[] { ip } : [];
         var host = !string.IsNullOrWhiteSpace(c.Host) ? c.Host : c.SniffHost;
         var protocol = c.Network.Equals("udp", StringComparison.OrdinalIgnoreCase) ? DestinationProtocol.Udp : DestinationProtocol.Tcp;

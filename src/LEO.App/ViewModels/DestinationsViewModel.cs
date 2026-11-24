@@ -57,7 +57,7 @@ public sealed partial class DestinationsViewModel : ObservableObject
     [ObservableProperty] public partial string TestNetworkText { get; set; } = "";
     [ObservableProperty] public partial string TestWhyText { get; set; } = "";
 
-    public IReadOnlyList<NetworkOption> Networks => NetworkOption.From(_connection.Networks);
+    public IReadOnlyList<NetworkOption> Networks => NetworkOption.From(_connection.Networks, _connection.SplitTunnel.Bonds);
 
     [ObservableProperty] public partial string? VpnBanner { get; set; }
 
@@ -66,8 +66,7 @@ public sealed partial class DestinationsViewModel : ObservableObject
         [new AppOption(null, "Any app", null),
          .. _connection.SplitTunnel.Rules.Select(r => new AppOption(r.Id, r.DisplayName, r.Kind == AppMatchKind.ExactPath ? r.Pattern : null))];
 
-    public string NetworkName(string adapterId) =>
-        _connection.Networks.Adapters.FirstOrDefault(a => a.Id == adapterId)?.DisplayName ?? "Network not connected";
+    public string NetworkName(string adapterId) => NetworkOption.NameOf(adapterId, _connection.Networks, _connection.SplitTunnel.Bonds);
 
     // ── Actions (from user events only) ─────────────────────────────────────
 
@@ -90,7 +89,7 @@ public sealed partial class DestinationsViewModel : ObservableObject
     public NetworkOption? DefaultTarget()
     {
         var nets = Networks;
-        var physical = nets.Where(n => !n.IsVpn).ToList();
+        var physical = nets.Where(n => !n.IsVpn && !n.IsBond).ToList();
         return physical.FirstOrDefault(n => n.IsUp && !n.IsPrimary) ?? physical.FirstOrDefault(n => n.IsPrimary) ?? nets.FirstOrDefault();
     }
 
@@ -176,7 +175,9 @@ public sealed partial class DestinationsViewModel : ObservableObject
             : info.State switch
             {
                 SplitTunnelEngineState.Running => (InfoBarSeverity.Success, "Split tunneling is on",
-                    info.UnruledVia is { } via ? $"Destinations below use their chosen network, even from apps that have their own rule. Everything else goes through {via} (that VPN takes all unruled traffic)." : "Destinations below use their chosen network, even from apps that have their own rule. Everything else uses your Primary network."),
+                    info.UnruledVia is { } via ? $"Destinations below use their chosen network, even from apps that have their own rule. Everything else goes through {via} (that VPN takes all unruled traffic)."
+                    : info.UnruledBondNow is { } bond ? $"Destinations below use their chosen network, even from apps that have their own rule. Everything else goes through bond '{bond}'."
+                    : "Destinations below use their chosen network, even from apps that have their own rule. Everything else uses your Primary network."),
                 SplitTunnelEngineState.Starting => (InfoBarSeverity.Informational, "Starting…", "LEO is starting its routing engine."),
                 SplitTunnelEngineState.Error => (InfoBarSeverity.Error, "Split tunneling paused", info.Message ?? "The routing engine stopped."),
                 SplitTunnelEngineState.NotInstalled => (InfoBarSeverity.Error, "Routing engine missing", info.Message ?? "Reinstall LEO."),

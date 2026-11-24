@@ -124,7 +124,8 @@ public sealed partial class MainViewModel : ObservableObject
         // M6: say when unruled traffic follows a VPN, or a VPN paused split tunneling.
         var split = _connection.SplitTunnel;
         var vpnNote = split.State == SplitTunnelEngineState.StoodAside ? " · split tunneling paused by a VPN"
-            : split.UnruledVia is { } via ? $" · through {via}" : "";
+            : split.UnruledVia is { } via ? $" · through {via}"
+            : split.UnruledBondNow is { } bond ? $" · everything else through bond '{bond}'" : "";
         TrayToolTip = IsConnected ? $"LEO — engine {EngineStateText.ToLowerInvariant()}{vpnNote}" : $"LEO — {ConnectionText}";
     }
 

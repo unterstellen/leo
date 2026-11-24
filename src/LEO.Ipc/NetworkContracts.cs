@@ -86,6 +86,7 @@ public enum NotificationKind
     SplitTunnelStoodAside = 9, // LEO paused split tunneling because a VPN only allows its own tunnel
     SplitTunnelResumed = 10,
     RoutesTampered = 11,       // another program keeps removing LEO's routes
+    BondMemberLost = 12,       // a network in a bond in use stopped working (M7)
 }
 
 /// <summary>Something the user should hear about; the tray app shows it as a Windows notification.</summary>

@@ -99,6 +99,26 @@ public sealed class LeoControlTarget : ILeoControl, IDisposable
 
     public event EventHandler<SplitTunnelInfo>? SplitTunnelChanged;
 
+    // ── Bonding (M7) ──
+
+    public async Task<string> SaveBondAsync(Leo.Core.SplitTunnel.Bond bond, CancellationToken cancellationToken = default)
+    {
+        var id = "";
+        await Mutate(nameof(SaveBondAsync), async () => id = await Split.SaveBondAsync(bond, cancellationToken));
+        return id;
+    }
+
+    public Task DeleteBondAsync(string bondId, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(DeleteBondAsync), () => Split.DeleteBondAsync(bondId, cancellationToken));
+
+    public Task MoveBondAsync(string bondId, bool up, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(MoveBondAsync), () => Split.MoveBondAsync(bondId, up, cancellationToken));
+
+    public Task SetUnruledBondAsync(string? bondId, CancellationToken cancellationToken = default) =>
+        Mutate(nameof(SetUnruledBondAsync), () => Split.SetUnruledBondAsync(bondId, cancellationToken));
+
+    public Task<BondsLiveInfo> GetBondsLiveAsync(CancellationToken cancellationToken = default) => Split.GetBondsLiveAsync(cancellationToken);
+
     private void OnSplitTunnelChanged(object? sender, SplitTunnelInfo e) => SplitTunnelChanged?.Invoke(this, e);
 
     private Leo.Service.SplitTunnel.SplitTunnelManager Split =>

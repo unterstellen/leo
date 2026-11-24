@@ -158,11 +158,12 @@ public sealed class StatsCollector(
         }
 
         var outbounds = Outbounds(networks.Snapshot);
-        var (apps, dests) = config.Read(c => (ProfileOpsClone(c.SplitTunnel.AppRules), ProfileOpsClone(c.SplitTunnel.DestinationRules)));
+        var (apps, dests, bondNames) = config.Read(c => (ProfileOpsClone(c.SplitTunnel.AppRules), ProfileOpsClone(c.SplitTunnel.DestinationRules),
+            c.SplitTunnel.Bonds.GroupBy(b => EnginePlan.BondGroupName(b.Id)).ToDictionary(g => g.Key, g => g.First().Name)));
         var kids = children?.Children ?? [];
         var list = conns.OrderByDescending(c => c.Start).Take(500).Select(c =>
         {
-            var (adapterId, network) = ConnectionDescriber.Network(c, outbounds);
+            var (adapterId, network) = ConnectionDescriber.Network(c, outbounds, bondNames);
             return new ConnectionInfo(c.Id, ConnectionDescriber.AppName(c.ProcessPath), c.ProcessPath, ConnectionDescriber.Destination(c),
                 c.DestinationPort, c.Network.ToUpperInvariant(), adapterId, network, ConnectionDescriber.Rule(c, apps, dests, kids),
                 c.Upload, c.Download, c.Start);

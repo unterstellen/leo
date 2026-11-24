@@ -151,6 +151,23 @@ public interface ILeoControl
 
     /// <summary>Installed VPN clients LEO knows, for Add app → VPN clients.</summary>
     Task<IReadOnlyList<VpnClientInfo>> GetVpnClientPresetsAsync(CancellationToken cancellationToken = default);
+
+    // ── Bonding (M7) ──────────────────────────────────────────────────────────
+
+    /// <summary>Creates (empty Id) or replaces a bond; validated by the service; returns its id. Full access.</summary>
+    Task<string> SaveBondAsync(Leo.Core.SplitTunnel.Bond bond, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a bond. Rules that used it stop being active until they get another network. Full access.</summary>
+    Task DeleteBondAsync(string bondId, CancellationToken cancellationToken = default);
+
+    /// <summary>Moves a bond up/down in the list. Full access.</summary>
+    Task MoveBondAsync(string bondId, bool up, CancellationToken cancellationToken = default);
+
+    /// <summary>"Everything else uses": a bond, or null = the Primary. Full access.</summary>
+    Task SetUnruledBondAsync(string? bondId, CancellationToken cancellationToken = default);
+
+    /// <summary>Per-member connection counts and engine health of each bond in use. Poll while the Bonding page is open.</summary>
+    Task<BondsLiveInfo> GetBondsLiveAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed record HelloRequest(int ProtocolVersion, string ClientName, string ClientVersion);
