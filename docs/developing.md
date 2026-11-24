@@ -73,7 +73,7 @@ Then, depending on what you changed:
 
 ## 7. Tests
 
-- **Unit tests** (`tests/LEO.Tests`, about 240) run anywhere and touch nothing on the PC: Rider's Unit Tests window, the gutter icons, or **Tests (all)**. GitHub runs the same tests on every push.
+- **Unit tests** (`tests/LEO.Tests`, about 240) run anywhere and touch nothing on the PC: Rider's Unit Tests window, the gutter icons, or **Tests (all)**. GitHub runs the same tests on every push to `canary` (Actions → Build → Run workflow for another branch).
 - One test runs the real engine's config check; it is skipped until the engine has been fetched (**Deploy service** does that, or `.\tools\get-engine.ps1`).
 - **Live tests** check the installed service on this PC and are off by default. They are switched on with environment variables (`LEO_LIVE_TESTS=1`, `LEO_LIVE_M6=…`, `LEO_LIVE_M7=…`, see `LEO.md` §12a, §21, §23). Some of them change rules on the running service. Read the test first.
 

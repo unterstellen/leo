@@ -1,11 +1,13 @@
-# Builds LEO and runs the tests on GitHub-hosted Windows runners for every push and pull request.
+# Builds LEO and runs the tests on GitHub-hosted Windows runners for every push to canary.
+# Only canary (user's decision, 2026-11-24): code reaches preview and main only through canary, so pull requests and
+# the merges into preview/main would just repeat the same build (4 runs per release before). Actions → Build → Run
+# workflow still builds any branch by hand; tags are built and tested by release.yml.
 # Live tests (real service, real probes, real Wi-Fi) are opt-in via LEO_LIVE_TESTS and are NOT run here.
 name: Build
 
 on:
   push:
-    branches: [canary, main, preview]
-  pull_request:
+    branches: [canary]
   workflow_dispatch:
 
 permissions:

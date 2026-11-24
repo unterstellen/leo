@@ -66,6 +66,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Publishing LEO.App failed.' }
 New-Item -ItemType Directory -Force $payload | Out-Null
 robocopy $appOut $payload /E /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw 'Copying the app payload failed.' }
+# robocopy's 1-7 mean success, but GitHub's pwsh steps exit with the last $LASTEXITCODE: with -SkipMsi nothing runs
+# after this, so a leftover 1 failed the release workflow's publish step although everything worked.
+$global:LASTEXITCODE = 0
 $clashes = @()
 Get-ChildItem $svcOut -Recurse -File | ForEach-Object {
     $rel = $_.FullName.Substring($svcOut.Length).TrimStart('\')
@@ -113,7 +116,7 @@ Write-Host ("Payload: {0} files, {1:N1} MB; {2} PE files, {3} not signed (a rele
     $all.Count, (($all | Measure-Object Length -Sum).Sum / 1MB), $pe.Count, $unsigned.Count)
 $unsigned | ForEach-Object { Write-Host "  unsigned: $($_.File)" }
 
-if ($SkipMsi) { return }
+if ($SkipMsi) { exit 0 }
 }
 
 # ── 5. MSI ───────────────────────────────────────────────────────────────────
