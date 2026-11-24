@@ -90,7 +90,7 @@ public sealed class EngineConfigCheckTests
         Directory.CreateDirectory(Path.Combine(dir, "rules"));
         try
         {
-            File.WriteAllText(Path.Combine(dir, "config.yaml"), plan.ToConfigYaml("127.0.0.1:9", "secret"));
+            File.WriteAllText(Path.Combine(dir, "config.yaml"), plan.ToConfigYaml("127.0.0.1:9"));
             foreach (var (name, content) in plan.ProviderFiles()) File.WriteAllText(Path.Combine(dir, "rules", name + ".yaml"), content);
 
             var psi = new ProcessStartInfo(engine) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };

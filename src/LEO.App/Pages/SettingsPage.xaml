@@ -4,6 +4,8 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:controls="using:Leo.App.Controls">
+    <!-- Toggles have no On/Off text. Windows' ToggleSwitch template keeps a fixed 12px gap after the switch for that text;
+         Margin="0,0,-12,0" cancels it so each switch lines up with its card's right padding. -->
     <ScrollViewer Padding="32,24,32,24">
         <StackPanel Spacing="16" MaxWidth="960" HorizontalAlignment="Left">
             <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}" />
@@ -19,7 +21,7 @@
                         <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
                                    Text="Opens LEO in the system tray when you sign in. Your network rules keep working either way, because the LEO service always starts with Windows." />
                     </StackPanel>
-                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" OnContent="On" OffContent="Off"
+                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" MinWidth="0" OnContent="" OffContent="" Margin="0,0,-12,0"
                                   IsOn="{x:Bind ViewModel.StartAtLogin, Mode=TwoWay}" />
                 </Grid>
             </Border>
@@ -35,7 +37,7 @@
                         <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
                                    Text="LEO checks every network for real internet every few seconds. When your top network loses internet, traffic moves to the next healthy one, and comes back after it has been fine for 30 seconds." />
                     </StackPanel>
-                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" OnContent="On" OffContent="Off"
+                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" MinWidth="0" OnContent="" OffContent="" Margin="0,0,-12,0"
                                   IsOn="{x:Bind Networks.AutoFailover, Mode=TwoWay}" IsEnabled="{x:Bind Networks.CanEdit, Mode=OneWay}" />
                 </Grid>
             </Border>
@@ -51,7 +53,7 @@
                         <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"
                                    Text="Failover and switch-back, new network adapters, sign-in pages and Wi-Fi reconnects. Shown while LEO is in the tray." />
                     </StackPanel>
-                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" OnContent="On" OffContent="Off"
+                    <ToggleSwitch Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" MinWidth="0" OnContent="" OffContent="" Margin="0,0,-12,0"
                                   IsOn="{x:Bind ViewModel.ShowNotifications, Mode=TwoWay}" />
                 </Grid>
             </Border>

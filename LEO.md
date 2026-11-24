@@ -335,6 +335,10 @@ src\LEO.App\bin\Debug\net10.0-windows10.0.26100.0\win-x64\LEO.exe   # run the UI
 - `LEO.Service.exe` with no arguments runs as a console app when started from a terminal. Logs: `%ProgramData%\UNTERSTELLEN\LEO\logs\` (service), `%LocalAppData%\UNTERSTELLEN\LEO\logs\` (UI connection errors).
 - Optional test switches: `LEO_LIVE_TESTS=1` runs read-only checks against the installed service; `LEO_DUMP=<file.dmp>` prints managed stacks and faulted tasks from a service dump (ClrMD, dev-only).
 
+### UI rules (the user's, don't regress these)
+- Every action comes from a Click handler (never from a two-way binding changing); one ContentDialog at a time; no hidden time limits (anything that can't be clicked right now is shown disabled); no em dashes in UI text.
+- **Card and list-row layout (2026-11-24):** main information on top (name, details, "Now:" line), **checkboxes on their own row below it**, **buttons on the last row**. Applied to the Apps, URLs & IPs and Networks cards and the Wi-Fi networks dialog rows. Toggles in Settings have no On/Off text and sit at the card's right padding.
+
 ### IPC rules learned the hard way (don't regress these)
 - **Never impersonate pipe clients** (`RunAsClient`). An identification-level token left on a thread-pool thread makes later lazy assembly loads fail with an empty `FileNotFoundException` (0x80070002), which silently killed StreamJsonRpc's read loop. Clients connect `Anonymous`; the service identifies them from the client process token (`GetNamedPipeClientProcessId` → `OpenProcessToken`, needs `TOKEN_QUERY | TOKEN_DUPLICATE`).
 - **Pipe buffers must be non-zero.** With 0-byte buffers a write only completes against a real read, but System.IO.Pipelines waits with zero-byte reads.

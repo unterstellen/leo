@@ -144,7 +144,7 @@ public sealed class EnginePlanTests
     public void Yaml_Contains_Bound_Outbounds_Excludes_And_Match()
     {
         var plan = EnginePlan.Build(Both(), WiFi, [Steam()], []);
-        var yaml = plan.ToConfigYaml("127.0.0.1:19190", "s3cret");
+        var yaml = plan.ToConfigYaml("127.0.0.1:19190");
         Assert.Contains("interface-name: 'Ethernet'", yaml);
         Assert.Contains("auto-detect-interface: false", yaml);
         Assert.Contains("- '192.168.0.0/16'", yaml);

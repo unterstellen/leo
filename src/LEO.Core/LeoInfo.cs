@@ -26,6 +26,24 @@ public static class LeoInfo
     public const string ServiceDescription =
         "LEO multi-network manager and split-tunneling engine by UNTERSTELLEN.";
 
+    /// <summary>
+    /// AppUserModelID of the unpackaged app: set by LEO.exe at start and on the MSI's Start menu shortcut, so toasts
+    /// and the taskbar group belong to LEO (LEO.md §24.2).
+    /// </summary>
+    public const string AppUserModelId = "UNTERSTELLEN.LEO";
+
+    /// <summary>HKLM\SOFTWARE\UNTERSTELLEN\LEO: machine-wide values set by an administrator.</summary>
+    public const string MachineRegistryKey = @"SOFTWARE\UNTERSTELLEN\LEO";
+
+    /// <summary>
+    /// DWORD under <see cref="MachineRegistryKey"/>: 1 turns the pipe-client signature check off on a signed install
+    /// (developers, opt-in live tests; LEO.md §24.6).
+    /// </summary>
+    public const string AllowUnsignedClientsValue = "AllowUnsignedClients";
+
+    /// <summary>HKLM/HKCU Run value name for "Start LEO at login" (the MSI writes the HKLM one, LEO.md §24.2).</summary>
+    public const string RunValueName = "LEO";
+
     /// <summary>Named pipe the service listens on (\.\pipe\LEO.Control).</summary>
     public const string ControlPipeName = "LEO.Control";
 

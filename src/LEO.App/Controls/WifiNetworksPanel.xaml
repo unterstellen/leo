@@ -40,19 +40,20 @@
                 <ItemsRepeater.ItemTemplate>
                     <DataTemplate x:DataType="vm:WifiRowViewModel">
                         <Border Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}" CornerRadius="6" Padding="12,8">
+                            <!-- Order (UI rule): network info on top, the checkbox below it, then the password box, then the buttons. -->
                             <Grid ColumnSpacing="12" RowSpacing="6">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
-                                <StackPanel VerticalAlignment="Center" Width="40">
+                                <StackPanel VerticalAlignment="Top" Width="40">
                                     <FontIcon Glyph="&#xE701;" FontSize="18" HorizontalAlignment="Center" />
                                     <TextBlock Text="{x:Bind SignalText}" FontSize="11" HorizontalAlignment="Center"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -64,20 +65,19 @@
                                 </StackPanel>
                                 <!-- OneWay + Click: pins change only on a real user click, never because a binding
                                      pushed a value while the dialog was being torn down. -->
-                                <CheckBox Grid.Column="2" Content="Keep connected" MinWidth="0" VerticalAlignment="Center"
+                                <CheckBox Grid.Row="1" Grid.Column="1" Content="Keep connected" MinWidth="0"
                                           IsChecked="{x:Bind IsPinned, Mode=OneWay}" IsEnabled="{x:Bind CanAct, Mode=OneWay}"
                                           Click="KeepConnected_Click" Tag="{x:Bind}" AutomationProperties.Name="{x:Bind PinAutomationName}" />
-                                <Grid Grid.Column="3" VerticalAlignment="Center">
+                                <PasswordBox Grid.Row="2" Grid.Column="1" PlaceholderText="Wi-Fi password"
+                                             Password="{x:Bind Password, Mode=TwoWay}"
+                                             Visibility="{x:Bind ShowPassword, Mode=OneWay}"
+                                             AutomationProperties.Name="{x:Bind PasswordAutomationName}" />
+                                <Grid Grid.Row="3" Grid.Column="1" HorizontalAlignment="Left">
                                     <Button Content="{x:Bind ConnectLabel, Mode=OneWay}" Click="Connect_Click" Tag="{x:Bind}"
                                             Visibility="{x:Bind CanConnect}" IsEnabled="{x:Bind CanAct, Mode=OneWay}" Style="{StaticResource AccentButtonStyle}"
                                             AutomationProperties.Name="{x:Bind ConnectAutomationName, Mode=OneWay}" />
                                     <Button Content="Disconnect" Click="Disconnect_Click" Tag="{x:Bind}" Visibility="{x:Bind CanDisconnect}" IsEnabled="{x:Bind CanAct, Mode=OneWay}" AutomationProperties.Name="{x:Bind DisconnectAutomationName}" />
                                 </Grid>
-
-                                <PasswordBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" PlaceholderText="Wi-Fi password"
-                                             Password="{x:Bind Password, Mode=TwoWay}"
-                                             Visibility="{x:Bind ShowPassword, Mode=OneWay}"
-                                             AutomationProperties.Name="{x:Bind PasswordAutomationName}" />
                             </Grid>
                         </Border>
                     </DataTemplate>
